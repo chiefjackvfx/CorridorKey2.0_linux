@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from app_cache import cache_path
 
 import numpy as np
 import torch
@@ -143,7 +144,7 @@ class InferenceConfig:
     low_vram_full_attn_query_chunk_tokens: int = 2048
     stage2_batch: int = 1
     outputs: set[str] = field(default_factory=lambda: {"alpha", "fg"})
-    temp_dir: Path = Path(tempfile.gettempdir()) / "corridorkey_v2"
+    temp_dir: Path = cache_path("inference")
     linear_brightness: float = 1.0
     linear_contrast: float = 1.0
     linear_contrast_pivot: float = 0.18

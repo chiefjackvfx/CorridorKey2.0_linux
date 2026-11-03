@@ -3,13 +3,19 @@ $project = $PSScriptRoot
 Set-Location -LiteralPath $project
 if (-not [Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { throw 'Supported: Windows x86-64' }
 $tools = Join-Path $project '.runtime\tools'
-$downloads = Join-Path $project '.runtime\downloads'
-New-Item -ItemType Directory -Force -Path "$tools\bin", $downloads | Out-Null
+$downloads = Join-Path $project '.cache\downloads'
+$tempDir = Join-Path $project '.cache\temp'
+New-Item -ItemType Directory -Force -Path "$tools\bin", $downloads, $tempDir | Out-Null
 $env:UV_UNMANAGED_INSTALL = "$tools\bin"
 $env:UV_NO_MODIFY_PATH = '1'
 $env:UV_NO_CONFIG = '1'
 $env:UV_PYTHON_INSTALL_DIR = "$tools\python"
-$env:UV_CACHE_DIR = "$downloads\uv"
+$env:UV_CACHE_DIR = Join-Path $project '.cache\uv'
+$env:PIP_CACHE_DIR = Join-Path $project '.cache\pip'
+$env:PYTHONPYCACHEPREFIX = Join-Path $project '.cache\python'
+$env:TEMP = $tempDir
+$env:TMP = $tempDir
+$env:TMPDIR = $tempDir
 Remove-Item Env:PYTHONHOME, Env:PYTHONPATH, Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
 $uv = "$tools\bin\uv.exe"
 $needsUv = -not (Test-Path -LiteralPath $uv)

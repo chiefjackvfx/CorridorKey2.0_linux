@@ -1,4 +1,5 @@
 """One persistent GPU worker, one running request, and one latest pending request."""
+from app_cache import cache_directory
 from worker_process import start_worker, signal_tree
 from dataclasses import asdict
 from collections import deque
@@ -22,7 +23,7 @@ class AutoPreview(QObject):
     def __init__(self, root, parent=None):
         super().__init__(parent)
         self.root = Path(root)
-        self.cache = tempfile.TemporaryDirectory(prefix='ck2-preview-')
+        self.cache = tempfile.TemporaryDirectory(prefix='ck2-preview-', dir=cache_directory('previews', root))
         self.process = QProcess(self)
         self.process.setWorkingDirectory(str(root))
         self.process.readyReadStandardOutput.connect(self.read)

@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import uuid
+from app_cache import cache_directory
 from worker_process import start_worker, signal_tree
 from PySide6.QtCore import Qt,QPointF,QRectF,QProcess,QTimer,Signal
 from PySide6.QtGui import QImage,QPainter,QPen,QColor,QKeySequence,QShortcut,QPixmap,QIcon
@@ -174,7 +175,7 @@ class HintEditor(QDialog):
     def __init__(self,root,source,settings,*,linear=True,color_space='rec709',seed='',parent=None):
         super().__init__(parent)
         self.root=Path(root);self.source=Path(source);self.settings=settings
-        self.work=tempfile.TemporaryDirectory(prefix='ck-hint-editor-')
+        self.work=tempfile.TemporaryDirectory(prefix='ck-hint-editor-', dir=cache_directory('hints', root))
         self.native_hw=None;self.image_path='';self.saved_path='';self.busy=False
         self.revision=0;self.buffer=b'';self.errors='';self.pending=None;self.closing=False
         self.object_masks={};self.selected=set();self.active_object=None;self.force_new=False
@@ -459,6 +460,7 @@ class HintEditor(QDialog):
         self.set_selected(selected,ident)
 
     def send(self,op,**values):
+        if self.closing:return
         self.revision+=1
         request=dict(id=self.revision,op=op,work=self.work.name,**values)
         self.set_busy(True)

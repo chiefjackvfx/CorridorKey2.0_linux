@@ -22,6 +22,11 @@ import shutil
 import urllib.request
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_support import configure
+configure()
+
 from huggingface_hub import hf_hub_download, snapshot_download
 
 CORRIDORKEY_REPO = "nikopueringer/CorridorKey2.0"

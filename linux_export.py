@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import uuid
+from app_cache import cache_directory
 
 PASSES=('fg','cutout','checker','alpha')
 IMAGES={'.png','.jpg','.jpeg','.exr'}
@@ -187,9 +188,14 @@ def validate_passes(files,output_format,expected_frames=None):
 def publish_passes(reservation,files,record=None):
     """Prepare every pass, then publish each complete directory; roll back on failure."""
     plan=reservation.plan;temporary=[];published=[]
+    stage_parent=cache_directory('publish')
+    # Exclusive rename must stay on the destination filesystem. For a different
+    # filesystem, keep only the short-lived publication stage in its local .cache.
+    if stage_parent.stat().st_dev != Path(plan.parent).stat().st_dev:
+        stage_parent=cache_directory('ck2-publish',plan.parent)
     try:
         for key in plan.passes:
-            stage=Path(tempfile.mkdtemp(prefix='.ck2-publish-',dir=plan.parent));temporary.append(stage)
+            stage=Path(tempfile.mkdtemp(prefix='ck2-publish-',dir=stage_parent));temporary.append(stage)
             for index,source in enumerate(files[key]):
                 copy_exclusive(source,stage/plan.filename(key,index))
         for key,stage in zip(plan.passes,temporary):

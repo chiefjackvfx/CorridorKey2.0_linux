@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import tempfile
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -13,6 +12,10 @@ if not os.environ.get('PYTORCH_ALLOC_CONF') and not os.environ.get('PYTORCH_CUDA
     os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
 from pathlib import Path
+
+from runtime_support import configure
+from app_cache import cache_directory
+configure()
 
 import torch
 
@@ -77,7 +80,7 @@ def main():
     ap.add_argument('--no_oom_retry', action='store_true',
                     help='Fail immediately instead of restarting with smaller temporal windows after CUDA OOM.')
     ap.add_argument("--temp_dir",
-                    default=str(Path(tempfile.gettempdir()) / "corridorkey_v2"))
+                    default=str(cache_directory("inference")))
     ap.add_argument("--outputs", nargs="*", default=None,
                     help=("Any of: alpha fg/raw_fg checker cutout. "
                           "Default: alpha fg."))

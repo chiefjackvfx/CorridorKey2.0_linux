@@ -4,6 +4,8 @@
 
 ### Added
 
+- [2026-11-03T15:32:31+00:00] Added project-local cache storage and library temporary-path configuration.
+
 - [2026-11-03T13:49:00+00:00] Added selected-clip requeuing with preserved hints and previous exports.
 
 - [2026-11-03T13:24:12+00:00] Added managed Python, CUDA environment recovery, and verified FFmpeg downloads.
@@ -52,6 +54,9 @@
 
 ### Changed
 
+- [2026-11-03T15:32:31+00:00] Moved render intermediates, inference scratch, and installer downloads into cache.
+- [2026-11-03T15:32:31+00:00] Covered cache placement, worker environments, cleanup, and export preservation.
+
 - [2026-11-03T15:17:48+00:00] Validated portable SAM import, mask operations, and CUDA selection.
 
 - [2026-11-03T13:49:00+00:00] Covered requeue states, busy guards, settings, and output-version preservation.
@@ -72,6 +77,8 @@
 - [2026-11-02T12:20:02+00:00] Defaulted sequence playback to 25fps and enabled linear input.
 
 ### Fixed
+
+- [2026-11-03T15:32:31+00:00] Prevented closed hint editors from starting delayed background workers.
 
 - [2026-11-03T15:17:48+00:00] Fixed Windows SAM imports with portable Triton-free mask helpers.
 

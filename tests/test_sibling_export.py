@@ -111,6 +111,9 @@ class ExportFiles(unittest.TestCase):
         self.assertFalse(list(self.root.glob('.*.lock')))
         self.assertFalse(list((job/'render').glob('*_exr')))
         self.assertTrue(Path(receipt['settings']).is_file())
+        self.assertTrue(Path(receipt['work_dir']).is_relative_to(Path.cwd()/'.cache/renders'))
+        self.assertFalse(Path(receipt['work_dir']).exists())
+        self.assertFalse(Path(receipt['scratch_dir']).exists())
         failure=self.root/'failed';failure.mkdir();path=failure/'export.json';write_json(path,payload)
         with patch('scripts.render_job.subprocess.Popen',side_effect=OSError('failed to start')):
             self.assertEqual(execute_job(path),1)

@@ -61,7 +61,7 @@ def build_command(root, python, source, destination, options):
         raise ValueError("Internal resolution must be full, half, or quarter.")
     command = [str(python), '-u', str(Path(root) / 'infer.py'), '--input', str(source),
                '--output_dir', str(destination), '--outputs', *options.outputs,
-               '--temp_dir', str(Path(destination) / '.scratch'),
+               '--temp_dir', str(Path(root) / '.cache' / 'inference' / Path(destination).name),
                '--output_format', options.output_format, '--despill_strength', str(options.despill),
                '--frame_dir_fps', str(options.fps), '--num_frames', str(options.num_frames)]
     command += ['--carry_hint_quality', str(options.carry_quality), '--input_color_space', options.input_color_space]

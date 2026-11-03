@@ -85,6 +85,34 @@ submodules, repairs software while remembering SAM, and restarts only after
 verification succeeds. Close every CK2 instance before using the standalone
 update launcher. A project lock prevents setup from replacing a running app's venv.
 
+## Project-local cache and temporary files
+
+Disposable CK2 files live in `.cache/` beside the app, resolved from the
+installation directory rather than the current working directory or Windows
+AppData. The folder is created automatically and ignored by Git.
+
+- `.cache/previews/` and `.cache/hints/`: per-session previews and hint-editor work.
+- `.cache/renders/` and `.cache/inference/`: per-job intermediate media and scratch.
+- `.cache/temp/` and `.cache/downloads/`: library/setup temporary files and downloads.
+- `.cache/uv/`, `.cache/pip/`, `.cache/huggingface/`, `.cache/torch/`, and related
+  subfolders: package, model-library, Python bytecode, and CUDA/Triton caches.
+
+Windows and Linux setup scripts set temporary/cache paths before provisioning
+Python. The app and workers also set these paths before importing model libraries.
+Preview/hint workspaces are removed on close, and successful exports remove
+intermediate render media and scratch. Failed render cache locations are recorded
+in `logs/jobs/<job>/export.json` for inspection. Durable logs and settings receipts
+stay under `logs/jobs/`; final exports, weights, and saved hints keep their paths.
+
+Atomic folder publication must use the destination filesystem. When exporting to
+another filesystem, the short-lived publication stage therefore uses
+`<output parent>/.cache/ck2-publish/`; its working folders are removed afterward.
+
+Close CK2 and stop setup/update jobs before manually deleting `.cache/`.
+Reusable library and installer caches are rebuilt as needed. Preferences and
+exported media are not stored in this disposable folder. Explicit CLI
+`--temp_dir` overrides remain available.
+
 ## Repair and troubleshooting
 
 Rerun Install / Repair after a failure. OS-held locks prevent concurrent setup
@@ -120,7 +148,7 @@ are included but run only on Windows. A real Windows NVIDIA validation of
 preview, SAM, EXR/video export, and update/restart is still required.
 
 
-Current Linux validation: 82 tests passed, with three Windows-only tests skipped.
+Current Linux validation: 87 tests passed, with three Windows-only tests skipped.
 The real managed installer and its healthy-environment reuse passed. The external
 updater also passed a local-repository fast-forward/setup/restart integration
 test. CUDA prerequisites and actual EXR/video GPU export checks passed in the

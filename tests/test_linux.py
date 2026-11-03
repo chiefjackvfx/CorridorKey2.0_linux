@@ -23,7 +23,7 @@ class Commands(unittest.TestCase):
     def test_paths_are_single_arguments_and_scratch_is_isolated(self):
         cmd = self.command()
         self.assertEqual(cmd[cmd.index('--input') + 1], str(self.clip))
-        self.assertEqual(cmd[cmd.index('--temp_dir') + 1], str(self.root / 'out/.scratch'))
+        self.assertEqual(cmd[cmd.index('--temp_dir') + 1], str(self.root / '.cache/inference/out'))
         self.assertNotIn('--hann_chunk', cmd)
 
     def test_hints_and_low_memory(self):

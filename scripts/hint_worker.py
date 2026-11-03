@@ -8,6 +8,8 @@ import sys
 import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+from runtime_support import configure
+configure()
 os.environ['OPENCV_IO_ENABLE_OPENEXR']='1'
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'

@@ -50,7 +50,8 @@ You can select multiple media cards. Requeuing keeps per-clip hints and previous
 results; the next render uses current settings and a new output version.
 Requeuing is disabled while the queue is running. Stopping
 cancels the active process group (including FFmpeg) and leaves unstarted clips
-queued. Private intermediate files from cancelled or failed jobs remain for inspection.
+queued. Intermediate files from cancelled or failed jobs remain under `.cache/`
+for inspection; their locations are recorded in the private job receipt.
 
 ### Export folders and passes
 
@@ -79,8 +80,8 @@ four digits. Movies and unnumbered sources start at 1001. Video exports use the
 same folder/version scheme, with MOV for Cutout and MP4 for other passes.
 
 Final pass folders contain media only. The job receipt (`export.json`),
-`inference.log`, settings, and working files live under this installation's
-`logs/jobs/` directory. Outputs are validated before publication; handled
+`inference.log`, and settings live under this installation's `logs/jobs/`
+directory. Disposable working media and inference scratch live under `.cache/`. Outputs are validated before publication; handled
 publication failures roll back newly created pass folders. Successful jobs remove
 their bulky intermediate media. **Open selected results** and rendered-channel
 viewing use the published pass paths. Direct `infer.py` commands retain the
@@ -391,8 +392,8 @@ session is required; `QT_QPA_PLATFORM=offscreen` is for testing only.
 If moved to another location, rerun
 `venv/bin/python scripts/create_linux_launcher.py` to regenerate the shortcut.
 Virtual environments themselves are not portable; recreate `venv` on another
-machine. Output scratch is isolated per job in its `.scratch` directory;
-cancelled jobs may leave scratch files that can be removed after processing stops.
+machine. Output scratch is isolated per job under `.cache/inference/`;
+cancelled jobs may leave cache files that can be removed after processing stops.
 
 ## Validation
 

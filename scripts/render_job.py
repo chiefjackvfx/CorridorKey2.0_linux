@@ -4,10 +4,15 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
+import uuid
 import subprocess
 import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+from app_cache import cache_directory
+from runtime_support import configure
+configure()
 os.environ['OPENCV_IO_ENABLE_OPENEXR']='1'
 from linux_export import Reservation,runtime_passes,validate_passes,publish_passes,write_json,source_frames
 from linux_jobs import Options,build_command
@@ -26,7 +31,10 @@ def execute_job(job_path):
         reservation=Reservation.reserve(job['source'],job['base'],options.outputs,sibling=options.save_sibling,
                                         output_format=options.output_format,owner=job['id'])
         plan=reservation.plan
-        update('running',plan=vars(plan),reservation=str(reservation.lock),passes={})
+        directory=cache_directory('renders',ROOT)/uuid.uuid4().hex
+        scratch=ROOT/'.cache/inference'/directory.name
+        update('running',plan=vars(plan),reservation=str(reservation.lock),passes={},
+               work_dir=str(directory),scratch_dir=str(scratch))
         print('Export targets:',*plan.preview,sep='\n  ',flush=True)
         expected=len(source_frames(job['source'])) if Path(job['source']).is_dir() else None
         if expected is None:
@@ -35,7 +43,6 @@ def execute_job(job_path):
             try:expected=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or None
             finally:cap.release()
         if options.num_frames>0:expected=min(expected,options.num_frames) if expected else options.num_frames
-        directory=work/'render'
         command=build_command(ROOT,sys.executable,job['source'],directory,options)
         child=subprocess.Popen(command)
         code=child.wait()
@@ -45,17 +52,17 @@ def execute_job(job_path):
         count,hw=validate_passes(files,options.output_format,expected)
         settings=list(directory.glob('*_settings.txt'))
         if len(settings)!=1:raise ValueError('The render settings receipt is missing or ambiguous.')
+        metadata=work/'render';metadata.mkdir(exist_ok=True)
+        saved_settings=metadata/settings[0].name
+        shutil.copy2(settings[0],saved_settings)
         update('publishing',frame_count=count,dimensions=list(hw))
         def committed(passes):
             update('complete',passes=passes,first_frame=plan.first_frame,
-                   settings=str(settings[0]))
+                   settings=str(saved_settings))
         published=publish_passes(reservation,files,committed)
-        # Keep settings/logs; remove only this attempt's finished staging media.
-        for key,paths in files.items():
-            if options.output_format=='exr':
-                import shutil
-                shutil.rmtree(paths[0].parent,ignore_errors=True)
-            else:paths[0].unlink(missing_ok=True)
+        # Metadata is durable; all disposable render media and scratch is local cache.
+        shutil.rmtree(directory)
+        shutil.rmtree(scratch,ignore_errors=True)
         print('Published completed passes:',*published.values(),sep='\n  ',flush=True)
         return 0
     except BaseException as exc:

@@ -4,11 +4,13 @@ import json
 import os
 import sys
 import subprocess
-import tempfile
 import shutil
 from pathlib import Path
 
-DEFAULT_TEMP_DIR = str(Path(tempfile.gettempdir()) / "corridorkey_v2")
+from runtime_support import configure
+from app_cache import cache_directory
+configure()
+DEFAULT_TEMP_DIR = str(cache_directory("inference"))
 
 class Colors:
     GREEN = "\033[92m"

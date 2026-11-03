@@ -2,13 +2,15 @@
 import os
 from pathlib import Path
 import sys
+from app_cache import cache_environment
 
 ROOT = Path(__file__).resolve().parent
 
 
 def environment(root=ROOT):
     env = os.environ.copy()
-    for name in ('PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
+    env.update(cache_environment(root))
+    for name in ('TRANSFORMERS_CACHE', 'PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
         env.pop(name, None)
     env['PYTHONNOUSERSITE'] = '1'
     tools = Path(root) / '.runtime' / 'ffmpeg' / 'bin'
@@ -20,7 +22,10 @@ def environment(root=ROOT):
 
 def configure(root=ROOT):
     os.environ.update(environment(root))
-    for name in ('PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
+    import tempfile
+    tempfile.tempdir = os.environ['TEMP']
+    sys.pycache_prefix = os.environ['PYTHONPYCACHEPREFIX']
+    for name in ('TRANSFORMERS_CACHE', 'PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
         os.environ.pop(name, None)
 
 

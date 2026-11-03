@@ -14,7 +14,8 @@ import tempfile
 import urllib.request
 import uuid
 import zipfile
-from runtime_support import ROOT, environment, python_path
+from runtime_support import ROOT, environment, python_path, configure
+from app_cache import cache_directory
 
 SAM_REVISION = 'f1647e8d0c1d280991f4d1b7d974c2704537fe66'
 RELEASE = 'autobuild-2026-11-03-12-50'
@@ -120,11 +121,11 @@ def ensure_ffmpeg(root=ROOT):
             verify_ffmpeg(root); return
         except (OSError,RuntimeError,subprocess.SubprocessError):
             print('Repairing managed FFmpeg files.',flush=True)
-    downloads=root/'.runtime/downloads'; downloads.mkdir(exist_ok=True)
+    downloads=cache_directory('downloads',root)
     archive=downloads/name
     if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest()!=checksum:
         fetch_verified(f'https://github.com/BtbN/FFmpeg-Builds/releases/download/{RELEASE}/{name}',archive,checksum)
-    with tempfile.TemporaryDirectory(dir=root/'.runtime',prefix='ffmpeg-') as temp:
+    with tempfile.TemporaryDirectory(dir=cache_directory('temp',root),prefix='ffmpeg-') as temp:
         stage=Path(temp)
         if name.endswith('.zip'):
             with zipfile.ZipFile(archive) as z:
@@ -201,6 +202,7 @@ def prepare(root, uv, base_python, sam=None, repair=False):
 
 
 def main():
+    configure()
     parser=argparse.ArgumentParser(); parser.add_argument('--uv',required=True);parser.add_argument('--python',required=True)
     choice=parser.add_mutually_exclusive_group();choice.add_argument('--sam',action='store_true',default=None);choice.add_argument('--no-sam',dest='sam',action='store_false')
     parser.add_argument('--repair',action='store_true');parser.add_argument('--skip-weights',action='store_true')
