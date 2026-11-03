@@ -23,6 +23,7 @@ vfms/**
 *.npz
 
 # Outputs & Temporary Files
+logs/
 out*/
 tmp/
 *.mov
@@ -36,4 +37,6 @@ tmp/
 
 # Local / studio-specific files
 path_mappings.json
+CorridorKey2-Linux.desktop
+hints/
 .claude/

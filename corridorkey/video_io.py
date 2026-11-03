@@ -244,8 +244,12 @@ def probe_video_meta(video_path: str, *, num_frames: int, shape_quantum: int,
     return meta
 
 
-def _read_frame_dir_views(path: str, *, exr_linear: bool):
+def _read_frame_dir_views(path: str, *, exr_linear: bool, input_color_space="rec709"):
     raw = read_image_rgb(path)
+    if input_color_space == "acescg":
+        from color_management import acescg_to_linear709
+        raw = acescg_to_linear709(raw)
+        exr_linear = True
     if exr_linear:
         linear = raw.astype(np.float32, copy=False)
         display = np.clip(cu.linear_to_srgb(np.maximum(linear, 0.0)), 0.0, 1.0)
@@ -257,13 +261,13 @@ def _read_frame_dir_views(path: str, *, exr_linear: bool):
 
 def probe_frame_dir_meta(frame_dir: str, *, num_frames: int,
                          shape_quantum: int, fps: float,
-                         exr_linear: bool, model_scale: float) -> dict:
+                         exr_linear: bool, model_scale: float, input_color_space="rec709") -> dict:
     paths = frame_paths(frame_dir)
     if not paths:
         raise RuntimeError(f"No frames found under {frame_dir}")
     if num_frames > 0:
         paths = paths[:num_frames]
-    first_display, _ = _read_frame_dir_views(paths[0], exr_linear=exr_linear)
+    first_display, _ = _read_frame_dir_views(paths[0], exr_linear=exr_linear, input_color_space=input_color_space)
     h_native, w_native = first_display.shape[:2]
     h_model, w_model = scaled_hw(h_native, w_native, model_scale)
     h_out = ceil_to_multiple(h_model, shape_quantum)
@@ -286,6 +290,7 @@ def probe_frame_dir_meta(frame_dir: str, *, num_frames: int,
         "pad": (pad_l, pad_r, pad_t, pad_b),
         "native_resolution": True,
         "exr_linear": bool(exr_linear),
+        "input_color_space": input_color_space,
         "linear_brightness": 1.0,
         "linear_contrast": 1.0,
         "linear_contrast_pivot": 0.18,
@@ -324,7 +329,8 @@ def preprocess_frame_dir_path(path: str, meta: dict, *, need_model: bool):
     h_out, w_out = meta["shape_hw"]
     h_model, w_model = meta["model_native_hw"]
     display, linear = _read_frame_dir_views(
-        path, exr_linear=bool(meta.get("exr_linear", False)))
+        path, exr_linear=bool(meta.get("exr_linear", False)),
+        input_color_space=meta.get("input_color_space", "rec709"))
     display = resize_hwc_lanczos(display, (h_model, w_model))
     linear = resize_hwc_lanczos(linear, (h_model, w_model))
     display, _ = center_pad_to_shape(np.clip(display, 0.0, 1.0), h_out, w_out)
@@ -336,6 +342,48 @@ def preprocess_frame_dir_path(path: str, meta: dict, *, need_model: bool):
     model = cu.linear_to_asinh(linear)
     model_t = torch.from_numpy(model.transpose(2, 0, 1)).to(dtype=torch.bfloat16)
     return model_t, display_t, display_t
+
+
+class NativeSourceReader:
+    """Read full-resolution float32 source RGB only for output restoration.
+
+    Keep this independent of padded/downsampled bfloat16 model tensors so opaque
+    pixels retain their original detail, HDR values, and color conversion.
+    """
+    def __init__(self, source, meta):
+        self.meta = meta
+        self.cap = None
+        self.next_frame = 0
+        if "frame_paths" not in meta:
+            self.cap = cv2.VideoCapture(str(source))
+            if not self.cap.isOpened():
+                raise RuntimeError(f"Could not open original source: {source}")
+
+    def read(self, indices):
+        frames = []
+        for index in indices:
+            if self.cap is None:
+                _, linear = _read_frame_dir_views(
+                    self.meta["frame_paths"][index],
+                    exr_linear=self.meta.get("exr_linear", False),
+                    input_color_space=self.meta.get("input_color_space", "rec709"))
+            else:
+                absolute = self.meta["start_frame"] + index
+                if absolute != self.next_frame:
+                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, absolute)
+                ok, bgr = self.cap.read()
+                if not ok:
+                    raise RuntimeError(f"Cannot read original source frame {absolute}")
+                self.next_frame = absolute + 1
+                linear = cu.srgb_to_linear(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0)
+            if linear.shape[:2] != tuple(self.meta["output_hw"]):
+                raise ValueError("Original source frame dimensions changed within the clip.")
+            frames.append(np.moveaxis(linear, -1, 0))
+        return np.stack(frames).astype(np.float32, copy=False)
+
+    def close(self):
+        if self.cap is not None:
+            self.cap.release()
 
 
 class SequentialVideoWindowReader:

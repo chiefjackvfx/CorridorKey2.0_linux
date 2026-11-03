@@ -37,3 +37,13 @@ the Apache License 2.0, also reproduced in `third_party/MoGe/LICENSE`.
 - Use: frozen recurrent video feature extractor. `corridorkey/rvm.py` is a
   PyTorch port of the reference architecture; weights are downloaded to
   `vfms/rvm/`.
+
+## Optional Meta SAM 3.1 hint generation
+
+The local hint editor can use Meta's official SAM 3.1 model and SAM source code.
+Source: https://github.com/facebookresearch/sam3, pinned commit
+`f1647e8d0c1d280991f4d1b7d974c2704537fe66`, stored under `third_party/sam3/`.
+The upstream `LICENSE` (SAM License) and other source notices are retained there.
+Checkpoint source: https://huggingface.co/facebook/sam3.1.
+The user supplies `sam3.1_multiplex.pt` after obtaining access from Meta.
+Neither SAM code nor SAM weights are covered by the CorridorKey license.

@@ -35,6 +35,8 @@ from .video_io import (
     window_starts,
     SequentialFrameDirWindowReader,
     SequentialVideoWindowReader,
+    NativeSourceReader,
+    resize_chw_lanczos,
 )
 
 
@@ -123,7 +125,10 @@ class InferenceConfig:
     linear_contrast_pivot: float = 0.18
     frame_dir_fps: float = 24.0
     frame_dir_linear: bool = False
+    input_color_space: str = "rec709"
     cutout_linear: bool = False
+    cutout_premultiplied: bool = False
+    keep_original: bool = False
     despill_strength: float = 0.5
     output_format: str = "video"
     exr_dtype: str = "half"
@@ -145,8 +150,10 @@ _VRAM_PEAK_GB = {
         (8.36, (3.25, 3.92, 5.28, 8.38, 20.78, 39.66, 64.65)),
     )),
 }
-_VRAM_MARGIN_SCALE = 1.1
-_VRAM_MARGIN_GB = 0.3
+# Measured peaks omit allocator fragmentation and transient copies on some
+# drivers/cards. Keep headroom instead of filling nearly all available VRAM.
+_VRAM_MARGIN_SCALE = 1.3
+_VRAM_MARGIN_GB = 2.0
 
 
 def _interp(x: float, points) -> float:
@@ -178,7 +185,9 @@ def select_vram_profile(shape_hw, num_frames: int, budget_gb: float):
     """
     megapixels = shape_hw[0] * shape_hw[1] / 1e6
     for chunk in reversed(_VRAM_PEAK_GB[True][0]):
-        for low_vram in (False, True):
+        # At 4K, prefer staged processing to avoid simultaneous stage-1/stage-2
+        # residency and large transient copies in the streaming path.
+        for low_vram in ((True, False) if megapixels >= 8 else (False, True)):
             if chunk not in _VRAM_PEAK_GB[low_vram][0]:
                 continue
             estimate = estimate_peak_vram_gb(megapixels, min(chunk, num_frames), low_vram)
@@ -587,9 +596,21 @@ def _crop_native_torch(x: torch.Tensor, meta: dict) -> torch.Tensor:
 def _resize_output_torch(x: torch.Tensor, meta: dict) -> torch.Tensor:
     if tuple(meta["model_native_hw"]) == tuple(meta["output_hw"]):
         return x
-    raise RuntimeError(
-        "optimized runtime render path requires native model_scale=1.0; "
-        "non-native scaling would need explicit Lanczos output rendering")
+    # Resize decoded linear RGB and scalar alpha, never asinh model values.
+    # CPU Lanczos avoids an additional full-resolution GPU interpolation workspace.
+    frames = x.detach().float().cpu().numpy()
+    resized = np.stack([resize_chw_lanczos(frame, meta["output_hw"]) for frame in frames])
+    return torch.from_numpy(resized).to(device=x.device, dtype=x.dtype)
+
+
+def _restore_solid(foreground, alpha, original):
+    if original is None:
+        return foreground
+    return torch.where(alpha > 0.95, original, foreground)
+
+
+def _associate_cutout(rgb, alpha, meta):
+    return rgb * alpha if meta.get("cutout_premultiplied", False) else rgb
 
 
 def _linear_adjust_inverse_torch(linear: torch.Tensor, meta: dict) -> torch.Tensor:
@@ -641,7 +662,7 @@ def _chw_to_bgra_f32_cpu(rgb: torch.Tensor, alpha: torch.Tensor) -> np.ndarray:
 
 def _render_predictions_exr_torch(meta: dict, outputs: set[str],
                                   checker: torch.Tensor,
-                                  logits: torch.Tensor) -> dict[str, np.ndarray]:
+                                  logits: torch.Tensor, original: torch.Tensor | None = None) -> dict[str, np.ndarray]:
     """Render a stage-2 batch as unclamped scene-linear float32 NHWC arrays.
 
     HDR contract: `fg`, `cutout`, and `checker` color stays in decoded linear
@@ -667,25 +688,26 @@ def _render_predictions_exr_torch(meta: dict, outputs: set[str],
     pf_linear = _linear_adjust_inverse_torch(cu.asinh_to_linear(pf_model), meta)
     pf_linear = _resize_output_torch(pf_linear, meta)
     if "fg" in outputs:
-        rendered["fg"] = _chw_to_bgr_f32_cpu(pf_linear)
+        rendered["fg"] = _chw_to_bgr_f32_cpu(_restore_solid(pf_linear, pa, original))
     if "cutout" in outputs:
         pf_linear_despilled = _despill_average_srgb_torch(
             pf_linear, strength=despill_strength)
-        rendered["cutout"] = _chw_to_bgra_f32_cpu(pf_linear_despilled, pa)
+        rendered["cutout"] = _chw_to_bgra_f32_cpu(
+            _associate_cutout(_restore_solid(pf_linear_despilled, pa, original), pa, meta), pa)
     if "checker" in outputs:
         checker_b = checker.to(device=pf_linear.device,
                                dtype=pf_linear.dtype).unsqueeze(0)
         bg_lin = cu.srgb_to_linear(checker_b)
         pf_despill = _despill_average_srgb_torch(
             pf_linear, strength=despill_strength)
-        comp_lin = pf_despill * pa + bg_lin * (1.0 - pa)
+        comp_lin = _restore_solid(pf_despill, pa, original) * pa + bg_lin * (1.0 - pa)
         rendered["checker"] = _chw_to_bgr_f32_cpu(comp_lin)
     return rendered
 
 
 def _render_predictions_torch(meta: dict, outputs: set[str],
                               checker: torch.Tensor,
-                              logits: torch.Tensor) -> dict[str, np.ndarray]:
+                              logits: torch.Tensor, original: torch.Tensor | None = None) -> dict[str, np.ndarray]:
     """Render a stage-2 batch on GPU, returning uint16 BGR/BGRA NHWC arrays.
 
     This removes the previous per-frame numpy HDR decode, sRGB encode,
@@ -705,46 +727,53 @@ def _render_predictions_torch(meta: dict, outputs: set[str],
     fg_model = logits[:, 1:4].float()
     pf_model = _crop_native_torch(fg_model, meta)
     pf_linear = _linear_adjust_inverse_torch(cu.asinh_to_linear(pf_model), meta)
-    pf_linear_pos = pf_linear.clamp(min=0.0)
-    pf = _resize_output_torch(cu.linear_to_srgb(pf_linear_pos), meta).clamp(0.0, 1.0)
+    pf_linear = _resize_output_torch(pf_linear, meta).clamp(min=0.0)
+    original_srgb = (cu.linear_to_srgb(original.clamp(min=0.0)).clamp(0.0, 1.0)
+                     if original is not None else None)
+    pf = cu.linear_to_srgb(pf_linear).clamp(0.0, 1.0)
     if "fg" in outputs:
-        rendered["fg"] = _srgb_to_bgr_uint16_cpu(pf)
+        rendered["fg"] = _srgb_to_bgr_uint16_cpu(_restore_solid(pf, pa, original_srgb))
     if "cutout" in outputs:
-        pf_linear_despilled = _despill_average_srgb_torch(pf_linear_pos, strength=despill_strength)
         if meta.get("cutout_linear", False):
-            pf_linear_despilled_resized = _resize_output_torch(pf_linear_despilled, meta).clamp(0.0, 1.0)
-            rendered["cutout"] = _srgb_to_bgra_uint16_cpu(pf_linear_despilled_resized, pa)
+            color = _despill_average_srgb_torch(pf_linear, strength=despill_strength)
+            color = _restore_solid(color, pa, original).clamp(0.0, 1.0)
         else:
-            pf_despill = _despill_average_srgb_torch(pf, strength=despill_strength)
-            rendered["cutout"] = _srgb_to_bgra_uint16_cpu(pf_despill, pa)
+            color = _despill_average_srgb_torch(pf, strength=despill_strength)
+            color = _restore_solid(color, pa, original_srgb).clamp(0.0, 1.0)
+        rendered["cutout"] = _srgb_to_bgra_uint16_cpu(_associate_cutout(color, pa, meta), pa)
     if "checker" in outputs:
         checker_b = checker.to(device=pf.device, dtype=pf.dtype).unsqueeze(0)
         bg_lin = cu.srgb_to_linear(checker_b)
-        alpha = pa
         pf_despill = _despill_average_srgb_torch(pf, strength=despill_strength)
-        comp_despill_lin = (
-            cu.srgb_to_linear(pf_despill) * alpha + bg_lin * (1.0 - alpha))
-        comp_despill = cu.linear_to_srgb(
-            comp_despill_lin.clamp(min=0.0)).clamp(0.0, 1.0)
-        rendered["checker"] = _srgb_to_bgr_uint16_cpu(comp_despill)
+        pf_despill = _restore_solid(pf_despill, pa, original_srgb)
+        comp_lin = cu.srgb_to_linear(pf_despill) * pa + bg_lin * (1.0 - pa)
+        rendered["checker"] = _srgb_to_bgr_uint16_cpu(
+            cu.linear_to_srgb(comp_lin.clamp(min=0.0)).clamp(0.0, 1.0))
     return rendered
 
 
 def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
                   writer_cfg: WriterConfig, *, initial_hint_path: str | None,
                   hint_video_path: str | None):
+    if cfg.model_scale not in (1.0, 0.5, 0.25):
+        raise ValueError("Internal resolution must be full, half, or quarter.")
     input_path = str(input_path)
     output_dir = str(output_dir)
     cfg.temp_dir.mkdir(parents=True, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
     is_dir = os.path.isdir(input_path)
+    if cfg.input_color_space not in ("rec709", "acescg"):
+        raise ValueError("Unsupported input color space")
+    if cfg.input_color_space == "acescg" and not is_dir:
+        raise ValueError("ACEScg input requires an image sequence, not encoded video.")
     reader_kind = "frame_dir" if is_dir else "video"
     reader_cls = SequentialFrameDirWindowReader if is_dir else SequentialVideoWindowReader
     if is_dir:
         meta = probe_frame_dir_meta(
             input_path, num_frames=cfg.num_frames,
             shape_quantum=cfg.shape_quantum, fps=cfg.frame_dir_fps,
-            exr_linear=cfg.frame_dir_linear, model_scale=cfg.model_scale)
+            exr_linear=cfg.frame_dir_linear or cfg.input_color_space == "acescg", model_scale=cfg.model_scale,
+            input_color_space=cfg.input_color_space)
         if (not cfg.frame_dir_linear
                 and meta["frame_paths"]
                 and meta["frame_paths"][0].lower().endswith(".exr")):
@@ -765,6 +794,7 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
     if cfg.auto_vram:
         apply_auto_vram(cfg, (H, W), T_all)
     H_out, W_out = meta["output_hw"]
+    meta["cutout_premultiplied"] = cfg.cutout_premultiplied
     meta["cutout_linear"] = cfg.cutout_linear
     meta["despill_strength"] = cfg.despill_strength
     fps = float(meta["native_fps"])
@@ -772,6 +802,7 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
     checker = make_checker(H_out, W_out)
     checker_t = torch.from_numpy(checker)
     writers = {}
+    source_reader = None
     suffix = {
         "alpha": "alpha",
         "fg": "fg",
@@ -779,6 +810,8 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
         "cutout": "cutout",
     }
     try:
+        if cfg.keep_original and cfg.outputs & {"fg", "cutout", "checker"}:
+            source_reader = NativeSourceReader(input_path, meta)
         use_exr = cfg.output_format == "exr"
         if cfg.output_format not in ("video", "exr"):
             raise ValueError(f"unsupported output format: {cfg.output_format}")
@@ -820,7 +853,12 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
                 sf.write(f"Carry Hint Quality: {cfg.carry_hint_quality}\n")
                 sf.write(f"Despill Strength: {cfg.despill_strength}\n")
                 sf.write(f"Cutout Linear: {cfg.cutout_linear}\n")
+                sf.write(f"Cutout Alpha: {'premultiplied' if cfg.cutout_premultiplied else 'straight'}\n")
+                sf.write(f"Keep Original in Solid Areas: {cfg.keep_original}\n")
+                sf.write(f"Output Dimensions: {W_out}x{H_out}\n")
                 sf.write(f"Frame Dir Linear: {cfg.frame_dir_linear}\n")
+                sf.write(f"Input Color Space: {cfg.input_color_space}\n")
+                sf.write("Output Primaries: Rec.709/sRGB D65 (EXR is scene-linear)\n")
                 sf.write(f"Hann Chunk: {cfg.hann_chunk}\n")
                 sf.write(f"Hann Stride: {cfg.hann_stride}\n")
                 sf.write(f"Low VRAM: {cfg.low_vram}\n")
@@ -889,7 +927,12 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
                         logits = logits[0]
                 render_fn = (_render_predictions_exr_torch if use_exr
                              else _render_predictions_torch)
-                rendered = render_fn(meta, cfg.outputs, checker_t, logits[0])
+                original = None
+                if source_reader is not None:
+                    original = torch.from_numpy(source_reader.read([item[0] for item in sub]))
+                    original = original.to(device=device)
+                rendered = render_fn(meta, cfg.outputs, checker_t, logits[0], original)
+                del original
                 for name, frames in rendered.items():
                     writers[name].write_many(frames)
                 del logits, baton_t, rgb_t, baton_np, rendered
@@ -926,12 +969,26 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
                 reader.close()
                 del baton
     finally:
+        # A failed/empty FFmpeg stream must not hide the original CUDA OOM:
+        # the CLI needs that exception to restart with a smaller window.
+        unwinding = sys.exc_info()[0] is not None
+        if source_reader is not None:
+            source_reader.close()
+        release_error = None
         for writer in writers.values():
-            writer.release()
+            try:
+                writer.release()
+            except Exception as exc:
+                if release_error is None:
+                    release_error = exc
+                if unwinding:
+                    print(f"[WARNING] Writer cleanup after inference failure: {exc}")
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_rvm_feat.f16")
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_baton.f16")
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_foundation_cradio.f32")
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_foundation_moge.f32")
         torch.cuda.empty_cache()
+        if release_error is not None and not unwinding:
+            raise release_error
     print(f"  wrote {len(writers)} output video(s) for {clip_name} "
           f"({T_all} frames @ {W_out}x{H_out})")

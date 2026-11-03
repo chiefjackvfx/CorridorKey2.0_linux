@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import tempfile
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
+# Honour allocator settings explicitly supplied by the user.
+if not os.environ.get('PYTORCH_ALLOC_CONF') and not os.environ.get('PYTORCH_CUDA_ALLOC_CONF'):
+    os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
 from pathlib import Path
 
@@ -70,6 +74,8 @@ def main():
     ap.add_argument("--low_vram", action="store_true",
                     help="Staged low-memory inference. Passing this or "
                          "--hann_chunk turns off automatic selection.")
+    ap.add_argument('--no_oom_retry', action='store_true',
+                    help='Fail immediately instead of restarting with smaller temporal windows after CUDA OOM.')
     ap.add_argument("--temp_dir",
                     default=str(Path(tempfile.gettempdir()) / "corridorkey_v2"))
     ap.add_argument("--outputs", nargs="*", default=None,
@@ -80,12 +86,19 @@ def main():
                     default="begin")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--model_scale", type=float, default=1.0,
-                    help="Lanczos scale before model inference; 1.0 is native.")
+                    choices=(1.0, 0.5, 0.25),
+                    help="Internal scale: full, half, or quarter. Output retains source dimensions.")
     ap.add_argument("--frame_dir_fps", type=float, default=24.0)
+    ap.add_argument('--input_color_space', choices=('rec709', 'acescg'), default='rec709',
+                    help='Sequence input primaries. ACEScg converts AP1/D60 to linear Rec.709/D65 before inference.')
     ap.add_argument("--frame_dir_linear", action="store_true",
                     help="Treat frame-directory inputs as scene-linear RGB.")
     ap.add_argument("--cutout_linear", action="store_true",
-                    help="Export cutout as straight linear RGB instead of straight sRGB.")
+                    help="Export cutout in linear RGB instead of sRGB.")
+    ap.add_argument("--cutout_premultiplied", action="store_true",
+                    help="Multiply cutout RGB by alpha in the output encoding.")
+    ap.add_argument("--keep_original", action="store_true",
+                    help="Restore full-resolution source RGB wherever output alpha exceeds 0.95.")
     ap.add_argument("--despill_strength", type=float, default=0.5,
                     help="Despill strength from 0.0 (none) to 1.0 (full). Default: 0.5.")
     ap.add_argument("--linear_brightness", type=float, default=1.0)
@@ -161,21 +174,36 @@ def main():
         linear_contrast_pivot=args.linear_contrast_pivot,
         frame_dir_fps=args.frame_dir_fps,
         frame_dir_linear=args.frame_dir_linear,
+        input_color_space=args.input_color_space,
         cutout_linear=args.cutout_linear,
+        cutout_premultiplied=args.cutout_premultiplied,
+        keep_original=args.keep_original,
         despill_strength=args.despill_strength,
         output_format=args.output_format,
         exr_dtype=args.exr_dtype,
     )
     model = load_model(paths, device="cuda")
-    run_inference(
-        model,
-        args.input,
-        args.output_dir,
-        infer_cfg,
-        writer_cfg,
-        initial_hint_path=args.hint_first_frame,
-        hint_video_path=args.hint_video,
-    )
+    try:
+        run_inference(
+            model, args.input, args.output_dir, infer_cfg, writer_cfg,
+            initial_hint_path=args.hint_first_frame, hint_video_path=args.hint_video,
+        )
+    except torch.OutOfMemoryError:
+        from memory_retry import oom_retry_overrides, retry_arguments
+        overrides = oom_retry_overrides(infer_cfg)
+        if args.no_oom_retry or overrides is None:
+            print('[ERROR] CUDA memory exhausted. Free GPU memory in other applications '
+                  'or use a smaller input resolution. Automatic retries exhausted or disabled.', flush=True)
+            raise
+        print(f'[CUDA OOM] Restarting clip from frame one with low GPU memory, '
+              f'hann_chunk={overrides["hann_chunk"]}, hann_stride={overrides["hann_stride"]}. '
+              'Output resolution is unchanged; temporal context is reduced.', flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Replace this process to release every CUDA allocation, including tensors
+        # held by the failing traceback. The PID/session stays cancellable by Qt.
+        os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()),
+                                 *retry_arguments(sys.argv[1:], overrides)])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
 # CorridorKey 2.0
 
+**Local Linux desktop edition:** see [LINUX.md](LINUX.md) for installation,
+the desktop job queue, troubleshooting, and validation. Start with `./2-start.sh`
+after running `./1-install.sh`. The upstream instructions follow below.
+
 Welcome to CorridorKey 2.0! You may rest easy, weary artist. The green beast has been slain. The CorridorKey 2.0 model was designed and trained by Zachary Harris, in direct collaboration with Niko and Corridor Digital.
 
 # Check out our official plugin!
