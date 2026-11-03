@@ -20,6 +20,7 @@ class GitUpdates(unittest.TestCase):
         self.git(self.writer,'checkout','-b','master');self.config(self.writer)
         (self.writer/'CHANGELOG.md').write_text('# Changelog\n\n## Unreleased\n\n### Added\n\n- Initial change\n')
         (self.writer/'.gitignore').write_text('.runtime/\n')
+        (self.writer/updates.LEGACY_LAUNCHER).write_text('@echo off\nrem original legacy launcher\n')
         self.commit(self.writer,'initial');self.git(self.writer,'push','-u','origin','master')
         self.git(self.root,'clone',str(self.remote),str(self.local));self.config(self.local)
 
@@ -52,6 +53,36 @@ class GitUpdates(unittest.TestCase):
         self.assertIn('current branch: work',self.status().message)
         self.git(self.local,'checkout','master');(self.local/'local.py').write_text('local');self.commit(self.local,'local')
         self.assertIn('diverged',self.status().message)
+
+    def test_unused_launcher_edit_survives_real_fast_forward(self):
+        launcher=self.local/updates.LEGACY_LAUNCHER
+        local_bytes=b'@echo off\r\nrem my unused launcher\r\n'
+        launcher.write_bytes(local_bytes)
+        self.publish();status=self.status()
+        self.assertTrue(status.can_update,status.message)
+        real_check=updates.check_updates
+        with patch.object(updates,'check_updates',side_effect=lambda root,fetch:real_check(root,fetch,repository=str(self.remote))):
+            updates.apply_update(self.local,status.target)
+        self.assertEqual(self.git(self.local,'rev-parse','HEAD'),status.target)
+        self.assertEqual(launcher.read_bytes(),local_bytes)
+
+    def test_incoming_legacy_launcher_change_still_blocks(self):
+        launcher=self.local/updates.LEGACY_LAUNCHER;launcher.write_text('my local edit')
+        (self.writer/updates.LEGACY_LAUNCHER).write_text('published edit')
+        self.commit(self.writer,'legacy launcher update');self.git(self.writer,'push')
+        status=self.status()
+        self.assertTrue(status.has_update);self.assertFalse(status.can_update)
+        self.assertIn(updates.LEGACY_LAUNCHER,status.message)
+        self.assertEqual(launcher.read_text(),'my local edit')
+
+    def test_legacy_exception_does_not_hide_other_or_staged_changes(self):
+        launcher=self.local/updates.LEGACY_LAUNCHER;launcher.write_text('my local edit')
+        self.publish()
+        changelog=self.local/'CHANGELOG.md';original=changelog.read_text();changelog.write_text(original+'local note')
+        status=self.status();self.assertFalse(status.can_update);self.assertIn('CHANGELOG.md',status.message)
+        changelog.write_text(original)
+        self.git(self.local,'add',updates.LEGACY_LAUNCHER)
+        status=self.status();self.assertFalse(status.can_update);self.assertIn(updates.LEGACY_LAUNCHER,status.message)
 
     def test_ahead_unavailable_and_timeout(self):
         (self.local/'local.py').write_text('local');self.commit(self.local,'local')

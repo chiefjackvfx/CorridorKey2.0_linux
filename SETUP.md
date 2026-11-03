@@ -70,12 +70,19 @@ background process with a timeout. Available updates offer **Update and restart*
 startup checks disabled, the app only inspects local Git state until you request
 a check. Notifications wait until queued work and hint generation finish.
 
-An update requires a clean master checkout with origin pointing to this fork,
+An update requires a master checkout with origin pointing to this fork,
 no local commits ahead of the target, and a fast-forwardable history. Tracked
-changes, untracked source files, and modified submodules block installation;
+changes, untracked source files, and modified submodules normally block installation;
 ignored weights, logs, caches, settings, and generated outputs do not. Archive
 installations can run, but need a Git checkout for self-updates. Nothing is
 stashed, reset, force-pulled, committed, or pushed automatically.
+
+One narrow exception permits an unstaged edit to the unused legacy
+`CorridorKey_DRAG_CLIPS_HERE.bat` when the incoming commit leaves that file
+unchanged. Git fast-forwards while preserving the local launcher byte-for-byte.
+If the update changes that launcher, it is staged, or other source files are
+modified, installation stays blocked. The status message lists blocking files.
+
 
 Installation is disabled during renders, queued work, or hint generation.
 After confirmation, CK2 stops preview workers, closes, and hands the checked
@@ -107,6 +114,12 @@ stay under `logs/jobs/`; final exports, weights, and saved hints keep their path
 Atomic folder publication must use the destination filesystem. When exporting to
 another filesystem, the short-lived publication stage therefore uses
 `<output parent>/.cache/ck2-publish/`; its working folders are removed afterward.
+
+Windows image-sequence previews copy the requested frame into the local cache,
+including frames read from UNC/NAS shares. Administrator access and Developer
+Mode are not required. Linux retains symbolic links where supported, with a copy
+fallback when permissions or filesystem support prevent linking. The original
+frame remains untouched, including during preview resizing.
 
 Close CK2 and stop setup/update jobs before manually deleting `.cache/`.
 Reusable library and installer caches are rebuilt as needed. Preferences and
@@ -148,7 +161,7 @@ are included but run only on Windows. A real Windows NVIDIA validation of
 preview, SAM, EXR/video export, and update/restart is still required.
 
 
-Current Linux validation: 87 tests passed, with three Windows-only tests skipped.
+Current Linux validation: 93 tests passed, with three Windows-only tests skipped.
 The real managed installer and its healthy-environment reuse passed. The external
 updater also passed a local-repository fast-forward/setup/restart integration
 test. CUDA prerequisites and actual EXR/video GPU export checks passed in the

@@ -13,6 +13,7 @@ from runtime_support import ROOT, environment, python_path
 REPOSITORY='https://github.com/chiefjackvfx/CorridorKey2.0.git'
 BRANCH='master'
 REF='refs/remotes/origin/master'
+LEGACY_LAUNCHER='CorridorKey_DRAG_CLIPS_HERE.bat'
 
 
 @dataclass
@@ -27,7 +28,28 @@ class UpdateStatus:
 
 def git(root,*args,timeout=30):
     env=environment(root);env.update(GIT_TERMINAL_PROMPT='0',GCM_INTERACTIVE='Never',GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10')
-    return subprocess.run(['git',*args],cwd=root,env=env,check=True,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout).stdout.strip()
+    return subprocess.run(['git',*args],cwd=root,env=env,check=True,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout).stdout.rstrip('\r\n')
+
+
+def blocking_changes(root, target):
+    """Permit an unstaged legacy-launcher edit only if the update leaves it alone.
+
+    Git can preserve unrelated working-tree edits during a fast-forward. Staged
+    changes, submodule changes, other files, and incoming edits still block.
+    """
+    records=git(root,'status','--porcelain=v1','-z','--untracked-files=normal').split('\0')
+    blockers=[];index=0
+    while index<len(records):
+        record=records[index];index+=1
+        if not record:continue
+        code,path=record[:2],record[3:]
+        if 'R' in code or 'C' in code:
+            index+=1  # Porcelain -z includes the original path after a rename/copy.
+        if code==' M' and path==LEGACY_LAUNCHER:
+            incoming=git(root,'diff','--name-only','-z','HEAD',target,'--',LEGACY_LAUNCHER)
+            if not incoming:continue
+        blockers.append(f'{code} {path}')
+    return blockers
 
 
 def changelog_entries(text):
@@ -63,11 +85,11 @@ def check_updates(root=ROOT,fetch=True,repository=REPOSITORY):
         remote_notes=read_notes(status.target)
         status.notes=incoming_notes(local,remote_notes)
         branch=git(root,'branch','--show-current')
-        dirty=git(root,'status','--porcelain','--untracked-files=normal')
+        dirty=blocking_changes(root,status.target)
         ahead,behind=map(int,git(root,'rev-list','--left-right','--count',f'HEAD...{status.target}').split())
         status.has_update=bool(behind)
         if branch!=BRANCH: status.message=f'Updates require master; current branch: {branch or "detached HEAD"}.'
-        elif dirty: status.message='Local changes prevent updating. Commit or resolve them manually.'
+        elif dirty: status.message='Local changes prevent updating:\n'+'\n'.join(dirty[:10])+'\nCommit or resolve these changes manually.'
         elif ahead and behind: status.message='Local and published history diverged. Resolve manually.'
         elif ahead: status.message='This checkout has local commits ahead of the published version.'
         elif behind: status.message=f'{behind} new commit(s) available.';status.can_update=True

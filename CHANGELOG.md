@@ -54,6 +54,8 @@
 
 ### Changed
 
+- [2026-11-03T15:46:31+00:00] Listed update-blocking files and tested safe legacy-launcher preservation.
+
 - [2026-11-03T15:32:31+00:00] Moved render intermediates, inference scratch, and installer downloads into cache.
 - [2026-11-03T15:32:31+00:00] Covered cache placement, worker environments, cleanup, and export preservation.
 
@@ -77,6 +79,10 @@
 - [2026-11-02T12:20:02+00:00] Defaulted sequence playback to 25fps and enabled linear input.
 
 ### Fixed
+
+- [2026-11-03T15:46:31+00:00] Allowed updates preserving unrelated edits to the unused legacy launcher.
+
+- [2026-11-03T15:40:58+00:00] Fixed Windows sequence previews without requiring symbolic-link privileges.
 
 - [2026-11-03T15:32:31+00:00] Prevented closed hint editors from starting delayed background workers.
 

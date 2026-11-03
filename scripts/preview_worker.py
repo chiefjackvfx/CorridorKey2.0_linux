@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Persistent CUDA preview worker: JSON requests on stdin, JSON replies on stdout."""
 import contextlib
+import errno
+import shutil
 import json
 import os
 from pathlib import Path
@@ -24,7 +26,19 @@ def extract(source, index, fps, destination):
         if not 0 <= index < len(frames):
             raise ValueError('Requested frame is outside the input or hint sequence.')
         target = destination / ('frame' + frames[index].suffix)
-        target.symlink_to(frames[index].resolve())
+        original = frames[index].resolve()
+        if sys.platform == 'win32':
+            # Ordinary Windows accounts cannot create symlinks, especially from
+            # UNC sources. Copy only this frame into the private local cache.
+            shutil.copyfile(original, target)
+        else:
+            try:
+                target.symlink_to(original)
+            except OSError as exc:
+                if getattr(exc, 'winerror', None) != 1314 and exc.errno not in (
+                        errno.EPERM, errno.EACCES, errno.ENOSYS, errno.ENOTSUP):
+                    raise
+                shutil.copyfile(original, target)
     else:
         target = destination / 'frame.png'
         subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(index/fps), '-i', str(source),
