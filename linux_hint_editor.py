@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import uuid
+from worker_process import start_worker, signal_tree
 from PySide6.QtCore import Qt,QPointF,QRectF,QProcess,QTimer,Signal
 from PySide6.QtGui import QImage,QPainter,QPen,QColor,QKeySequence,QShortcut,QPixmap,QIcon
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
@@ -464,7 +465,7 @@ class HintEditor(QDialog):
         self.status.setText('Loading SAM 3.1 / generating subject mask…' if op=='sam' else 'Preparing hint…')
         if self.process.state()==QProcess.NotRunning:
             self.errors='';self.buffer=b''
-            self.process.start('setsid',[sys.executable,'-u',str(self.root/'scripts/hint_worker.py')])
+            start_worker(self.process,[sys.executable,'-u',str(self.root/'scripts/hint_worker.py')])
         self.process.write((json.dumps(request)+'\n').encode())
         self.deadline.start()
 
@@ -557,8 +558,7 @@ class HintEditor(QDialog):
         self.deadline.stop()
         pid=self.process.processId()
         if pid:
-            try:os.killpg(pid,signal.SIGKILL)
-            except ProcessLookupError:pass
+            signal_tree(pid,getattr(signal,'SIGKILL',signal.SIGTERM))
             self.process.kill();self.process.waitForFinished(5000)
 
     def done(self,result):

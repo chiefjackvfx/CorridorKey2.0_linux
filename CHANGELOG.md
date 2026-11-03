@@ -4,6 +4,13 @@
 
 ### Added
 
+- [2026-11-03T13:49:00+00:00] Added selected-clip requeuing with preserved hints and previous exports.
+
+- [2026-11-03T13:24:12+00:00] Added managed Python, CUDA environment recovery, and verified FFmpeg downloads.
+- [2026-11-03T13:24:12+00:00] Added Windows launchers and cross-platform worker process ownership.
+- [2026-11-03T13:24:12+00:00] Added startup update checks, changelog viewer, and explicit restart updates.
+- [2026-11-03T13:24:12+00:00] Added update-state, migration, UI, and native Windows regression coverage.
+
 - [2026-11-03T11:32:54+00:00] Added versioned sibling exports and per-pass Deliver controls.
 - [2026-11-03T11:32:54+00:00] Added source-frame numbering and private export job storage.
 - [2026-11-03T11:32:54+00:00] Added transactional publication, collision protection, and export validation.
@@ -45,6 +52,14 @@
 
 ### Changed
 
+- [2026-11-03T13:49:00+00:00] Covered requeue states, busy guards, settings, and output-version preservation.
+
+- [2026-11-03T13:35:56+00:00] Validated managed-environment previews, SAM selections, and full-resolution EXR exports.
+
+- [2026-11-03T13:24:12+00:00] Documented installation, repair, updates, and Windows validation limitations.
+
+- [2026-11-03T11:57:03+00:00] Added README introduction crediting CK2 developers and UI inspiration.
+
 - [2026-11-03T11:54:54+00:00] Prepared fork setup with pinned SAM and local-file exclusions.
 - [2026-11-03T11:54:54+00:00] Documented fork installation and submodule-compatible SAM setup.
 
@@ -55,6 +70,8 @@
 - [2026-11-02T12:20:02+00:00] Defaulted sequence playback to 25fps and enabled linear input.
 
 ### Fixed
+
+- [2026-11-03T13:24:12+00:00] Closed retained scratch mappings before Windows file cleanup.
 
 - [2026-11-02T18:02:31+00:00] Fixed upstream SAM first-point mask loss on empty frames.
 

@@ -38,5 +38,10 @@ tmp/
 # Local / studio-specific files
 path_mappings.json
 CorridorKey2-Linux.desktop
+CorridorKey2-Windows.lnk
 hints/
 .claude/
+
+# Managed runtime and installer artifacts
+.runtime/
+.cache/

@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
     QMessageBox, QPushButton,
 )
 
+from worker_process import start_worker, signal_tree
+from runtime_support import configure
+
 from linux_jobs import Options, build_command, new_destination, validate_source
 
 ROOT = Path(__file__).resolve().parent
@@ -27,13 +30,14 @@ ROOT = Path(__file__).resolve().parent
 class Window(QMainWindow):
     def __init__(self, settings=None):
         super().__init__()
-        self.setWindowTitle('CorridorKey 2.0 • Linux')
+        self.setWindowTitle('CorridorKey 2.0 • ' + ('Windows' if os.name == 'nt' else 'Linux'))
         self.resize(1200, 850)
         self.setAcceptDrops(True)
         self.settings = settings if settings is not None else QSettings('CorridorKeyLocal', 'LinuxDesktop')
         self.jobs = []
         self.active = None
         self.stopping = False
+        self._queue_busy = False
         self.checking = False
         self.log_file = None
         self._closing = False
@@ -73,6 +77,8 @@ class Window(QMainWindow):
         self.hint.textChanged.connect(self.schedule_preview)
         self.linear.toggled.connect(self.input_color_changed)
         self.view_mode.setCurrentIndex(self.view_mode.findData('checker'))
+        from updates_ui import Updates
+        self.updates = Updates(self)
         self.gpu_probe = QProcess(self)
         self.gpu_probe.finished.connect(self.gpu_updated)
         self.gpu_probe.errorOccurred.connect(lambda _: self.gpu_memory.setText('Unavailable'))
@@ -100,6 +106,9 @@ class Window(QMainWindow):
         spin.setSingleStep(step)
         spin.setValue(value)
         return spin
+
+    def open_updates(self):
+        self.updates.show()
 
     def add_paths(self, paths):
         for path in paths:
@@ -134,6 +143,7 @@ class Window(QMainWindow):
             entry.setToolTip(data['output'] or data['source'])
             self.render_queue.addItem(entry)
         self.queue_heading.setText(f'Q U E U E  {self.queue.count()}')
+        self.update_requeue_action()
 
     def select_queue_entry(self, entry):
         self.queue.setCurrentRow(entry.data(Qt.UserRole))
@@ -153,6 +163,44 @@ class Window(QMainWindow):
         for item in self.queue.selectedItems():
             self.queue.takeItem(self.queue.row(item))
         self.sync_render_queue()
+
+    def requeue_candidates(self):
+        if self._queue_busy or self.process.state() != QProcess.NotRunning or self.jobs:
+            return []
+        return [item for item in self.queue.selectedItems()
+                if item.data(Qt.UserRole)['state'] in ('Done', 'Failed', 'Cancelled')]
+
+    def update_requeue_action(self):
+        self.requeue_button.setEnabled(bool(self.requeue_candidates()))
+
+    def requeue_selected(self):
+        items = self.requeue_candidates()
+        if not items:
+            return
+        for item in items:
+            data = item.data(Qt.UserRole)
+            data['state'] = 'Queued'
+            item.setData(Qt.UserRole, data)
+            item.setText(f'Queued • {Path(data["source"]).name}')
+        self.sync_render_queue()
+        self.update_output_preview()
+        self.status.setText(f'Requeued {len(items)} clip(s). Click Render queue to use current settings and a new output version.')
+
+    def queue_context_menu(self, view, position):
+        item = view.itemAt(position)
+        if item is None:
+            return
+        if view is self.render_queue:
+            self.select_queue_entry(item)
+        elif not item.isSelected():
+            self.queue.setCurrentItem(item)
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        action = menu.addAction('Requeue selected')
+        action.setEnabled(bool(self.requeue_candidates()))
+        action.triggered.connect(self.requeue_selected)
+        menu.exec(view.viewport().mapToGlobal(position))
+        menu.deleteLater()
 
     def sibling_changed(self, *args):
         enabled = not self.save_sibling.isChecked()
@@ -424,6 +472,8 @@ class Window(QMainWindow):
                        cutout_linear=self.cutout_linear.isChecked(), save_sibling=self.save_sibling.isChecked(), input_color_space=self.input_space.currentData())
 
     def set_busy(self, busy):
+        self._queue_busy = busy
+        self.update_requeue_action()
         if busy:
             self.preview_engine.stop()
             self.preview_images = {}
@@ -461,7 +511,7 @@ class Window(QMainWindow):
             QMessageBox.warning(self, 'Check settings', str(exc))
             return
         if not jobs:
-            self.status.setText('Add clips to queue. Re-add a clip to run it again.')
+            self.status.setText('No queued clips. Select a completed, failed, or cancelled clip and click Requeue selected.')
             return
         self.jobs = jobs
         self.settings.setValue('output', self.destination.text())
@@ -500,7 +550,7 @@ class Window(QMainWindow):
             self.mark_active('Running')
             self.status.setText(f'Processing {Path(data["source"]).name}')
             # Each inference job has its own session, including FFmpeg children.
-            self.process.start(shutil.which('setsid') or 'setsid', command)
+            start_worker(self.process, command)
         except (OSError, ValueError) as exc:
             self.log.appendPlainText(str(exc))
             self.mark_active('Failed')
@@ -582,15 +632,12 @@ class Window(QMainWindow):
 
     @staticmethod
     def signal_group(pid, sig):
-        try:
-            os.killpg(pid, sig)
-        except ProcessLookupError:
-            pass
+        signal_tree(pid, sig)
 
     def force_stop(self, pid):
         if self.process.processId() == pid and self.process.state() != QProcess.NotRunning:
             if not self.checking:
-                self.signal_group(pid, signal.SIGKILL)
+                self.signal_group(pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
             self.process.kill()
 
     def closeEvent(self, event):
@@ -598,6 +645,7 @@ class Window(QMainWindow):
             QMessageBox.information(self, 'Job running', 'Stop the queue before closing the application.')
             event.ignore()
             return
+        self.updates.close()
         self._closing = True
         self.media_thumbnails.close()
         self.preview_engine.close()
@@ -610,12 +658,22 @@ class Window(QMainWindow):
 
 
 def main():
+    configure()
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    window = Window()
-    window.add_paths(sys.argv[1:])
-    window.show()
-    return app.exec()
+    from contextlib import ExitStack
+    from runtime_setup import setup_lock
+    resources = ExitStack()
+    try:
+        resources.enter_context(setup_lock(ROOT, 'application.lock'))
+    except RuntimeError as exc:
+        QMessageBox.warning(None, 'CK2 is already running or being repaired', str(exc))
+        return 1
+    with resources:
+        window = Window()
+        window.add_paths(sys.argv[1:])
+        window.show()
+        return app.exec()
 
 
 if __name__ == '__main__':

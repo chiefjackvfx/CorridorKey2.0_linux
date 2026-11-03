@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,29 @@ from .video_io import (
     NativeSourceReader,
     resize_chw_lanczos,
 )
+
+
+# Error tracebacks can retain mapped arrays on Windows. Track mappings so the
+# outer inference cleanup releases their handles before unlinking scratch files.
+_runtime_maps = []
+
+
+def _open_memmap(*args, **kwargs):
+    mapped = np.memmap(*args, **kwargs)
+    _runtime_maps[:] = [reference for reference in _runtime_maps if reference() is not None]
+    _runtime_maps.append(weakref.ref(mapped))
+    return mapped
+
+
+def _close_runtime_memmaps():
+    for reference in _runtime_maps:
+        mapped = reference()
+        if mapped is not None and not mapped._mmap.closed:
+            try:
+                if mapped.mode != 'r': mapped.flush()
+            finally:
+                mapped._mmap.close()
+    _runtime_maps.clear()
 
 
 @dataclass
@@ -320,7 +344,7 @@ def precompute_rvm_to_memmap(model, source, meta, rvm_path: Path,
     h_e, w_e = H_e // 16, W_e // 16
     print(f"    RVM continuous prepass: T={T_all}, chunk={chunk}, "
           f"input={W_e}x{H_e}, grid={w_e}x{h_e}")
-    out = np.memmap(rvm_path, dtype=np.float16, mode="w+",
+    out = _open_memmap(rvm_path, dtype=np.float16, mode="w+",
                     shape=(T_all, D, h_e, w_e))
     mean = model.foundations.rvm_mean.view(1, 1, -1, 1, 1).float().cpu()
     std = model.foundations.rvm_std.view(1, 1, -1, 1, 1).float().cpu().clamp(min=1e-6)
@@ -368,13 +392,13 @@ def precompute_foundations_to_memmap(model, source, meta, prefix: Path,
         "moge": str(prefix) + "_moge.f32",
         "moge_shape": (T_all, C_moge, h64, w64),
     }
-    moge_out = np.memmap(paths["moge"], dtype=np.float32, mode="w+",
+    moge_out = _open_memmap(paths["moge"], dtype=np.float32, mode="w+",
                          shape=paths["moge_shape"])
     cradio_out = None
     if C_cradio > 0:
         paths["cradio"] = str(prefix) + "_cradio.f32"
         paths["cradio_shape"] = (T_all, C_cradio, h64, w64)
-        cradio_out = np.memmap(paths["cradio"], dtype=np.float32, mode="w+",
+        cradio_out = _open_memmap(paths["cradio"], dtype=np.float32, mode="w+",
                                shape=paths["cradio_shape"])
     print(f"    frozen VFM prepass: T={T_all}, grid={w64}x{h64}, chunk={chunk}")
     if reader_kind == "video":
@@ -449,7 +473,7 @@ def hann_stage1_stream(model, source, meta, *, reader_cls, reader_kind: str,
     overlap = max(0, chunk - stride)
     baton_fp16 = None
     if on_baton_frames is None:
-        baton_fp16 = np.memmap(baton_path, dtype=np.float16, mode="w+",
+        baton_fp16 = _open_memmap(baton_path, dtype=np.float16, mode="w+",
                                shape=(T_all, d_16, h16, w16))
     live_acc = {}
     live_w = {}
@@ -459,14 +483,14 @@ def hann_stage1_stream(model, source, meta, *, reader_cls, reader_kind: str,
     rvm_map = None
     if rvm_path is not None:
         D = model.foundations.rvm.embed_dim
-        rvm_map = np.memmap(rvm_path, dtype=np.float16, mode="r",
+        rvm_map = _open_memmap(rvm_path, dtype=np.float16, mode="r",
                             shape=(T_all, D, H // 64, W // 64))
     cradio_map = moge_map = None
     if foundation_paths is not None:
-        moge_map = np.memmap(foundation_paths["moge"], dtype=np.float32,
+        moge_map = _open_memmap(foundation_paths["moge"], dtype=np.float32,
                              mode="r", shape=tuple(foundation_paths["moge_shape"]))
         if model.stage1.cradio_dim > 0:
-            cradio_map = np.memmap(foundation_paths["cradio"], dtype=np.float32,
+            cradio_map = _open_memmap(foundation_paths["cradio"], dtype=np.float32,
                                    mode="r", shape=tuple(foundation_paths["cradio_shape"]))
 
     reader = reader_cls(str(source), meta)
@@ -951,7 +975,7 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
 
         if cfg.low_vram:
             _phase2_setup(model)
-            baton = np.memmap(
+            baton = _open_memmap(
                 baton_path, dtype=np.float16, mode="r",
                 shape=(T_all, model.stage1.d_16, H // 16, W // 16))
             reader = reader_cls(input_path, meta)
@@ -983,6 +1007,7 @@ def run_inference(model, input_path: str, output_dir: str, cfg: InferenceConfig,
                     release_error = exc
                 if unwinding:
                     print(f"[WARNING] Writer cleanup after inference failure: {exc}")
+        _close_runtime_memmaps()
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_rvm_feat.f16")
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_baton.f16")
         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_foundation_cradio.f32")

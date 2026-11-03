@@ -47,3 +47,17 @@ The upstream `LICENSE` (SAM License) and other source notices are retained there
 Checkpoint source: https://huggingface.co/facebook/sam3.1.
 The user supplies `sam3.1_multiplex.pt` after obtaining access from Meta.
 Neither SAM code nor SAM weights are covered by the CorridorKey license.
+
+
+## Managed runtime tools
+
+Setup downloads uv 0.12.21 from https://github.com/astral-sh/uv (MIT/Apache-2.0)
+and managed CPython via uv's python-build-standalone distributions. These tools
+are installed locally, not committed or redistributed as repository assets.
+
+Managed FFmpeg/ffprobe builds come from https://github.com/BtbN/FFmpeg-Builds,
+release `autobuild-2026-11-03-12-50`, FFmpeg `n8.1.3-32-g760d10603e`, GPL builds
+for Windows/Linux x86-64. Download URLs and SHA-256 digests are pinned in
+`runtime_setup.py`. The extracted build's license and other accompanying notices
+remain under `.runtime/ffmpeg/`; consult those files for the build's license
+and source information. CK2 invokes FFmpeg as a separate executable.

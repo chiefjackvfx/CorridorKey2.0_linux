@@ -1,0 +1,124 @@
+# CK2 desktop setup and updates
+
+The fork provides Linux and Windows launchers with a project-local Python 3.12,
+venv, and FFmpeg. Windows support is implemented but has not yet been verified
+on a Windows NVIDIA GPU. Linux is tested on Rocky Linux 9.8.
+
+## Install and run
+
+Install Git and a suitable NVIDIA driver first. CK2 requires an Ampere
+(RTX 30-series) or newer NVIDIA GPU. Linux also needs desktop Qt libraries,
+util-linux (`setsid`), and curl or wget. Windows requires x86-64 Windows 10/11
+and Windows PowerShell. Neither installer installs drivers or changes system
+Python, registry Python registrations, or global PATH.
+
+Clone `https://github.com/chiefjackvfx/CorridorKey2.0.git`, then use:
+
+| Action | Linux | Windows |
+| --- | --- | --- |
+| Install / repair | `./1-install.sh` | `windows_install.bat` |
+| Run | `./2-start.sh` | `windows_run.bat` |
+| Check prerequisites | `./3-check.sh` | `windows_check.bat` |
+| Enable SAM | `./4-install-sam.sh` | `windows_install_sam.bat` |
+| Update outside the app | `./5-update.sh` | `windows_update.bat` |
+
+The standalone `linux_install.sh` or `windows_install.bat` can also be downloaded
+and run outside a checkout. Pass an optional destination directory; otherwise
+it clones into `CorridorKey2.0` beside the installer. The target must be empty,
+absent, or an existing CK2 checkout. Existing checkout installation repairs
+software; it does not discard source changes or switch branches.
+
+Setup provisions pinned uv 0.12.21 and managed Python 3.12 under `.runtime/tools/`.
+It installs Torch 2.9.1 and torchvision 0.24.1 from the CUDA 12.8 index, with
+NumPy below 2. FFmpeg and ffprobe come from checksum-pinned BtbN builds, with
+required EXR, H.264, and ProRes codec checks. Their archive notices are retained
+under `.runtime/ffmpeg/`. The application and workers use these binaries without
+changing your global PATH. A local desktop shortcut is generated for this folder.
+
+Initial setup offers SAM support. Existing SAM installations are detected during
+the first migration; later repair/update runs remember the choice. The dedicated
+SAM launcher enables it later. Obtain `sam3.1_multiplex.pt` from Meta separately;
+setup never downloads that gated checkpoint. Choose its path in the hint editor.
+
+Setup needs internet access and substantial disk space for CUDA dependencies,
+model weights, temporary downloads, and an environment backup. Later ordinary
+launches install nothing and can run offline with previously downloaded weights.
+On Linux, `./1-install.sh --skip-weights` skips model downloads; `--repair` forces
+an environment rebuild and `--no-sam` disables optional SAM in the rebuilt venv.
+Windows can pass equivalent arguments directly to `setup_runtime.ps1`.
+
+## Updates and changelog
+
+Open **Updates & Changelog** in the workbench header. It shows the installed
+commit, update source, incoming notes, and the local changelog. Select
+**Unreleased**, an individual version, or **All changes**. No numbered release
+is necessary: new commits on `chiefjackvfx/CorridorKey2.0` **master** are updates.
+The fork must contain the implementation before other installations can receive it.
+
+**Check at startup** defaults on and is remembered. Startup checks run in a
+background process with a timeout. Available updates offer **Update and restart**,
+**View changes**, or **Later**. Network failures do not stop normal use. With
+startup checks disabled, the app only inspects local Git state until you request
+a check. Notifications wait until queued work and hint generation finish.
+
+An update requires a clean master checkout with origin pointing to this fork,
+no local commits ahead of the target, and a fast-forwardable history. Tracked
+changes, untracked source files, and modified submodules block installation;
+ignored weights, logs, caches, settings, and generated outputs do not. Archive
+installations can run, but need a Git checkout for self-updates. Nothing is
+stashed, reset, force-pulled, committed, or pushed automatically.
+
+Installation is disabled during renders, queued work, or hint generation.
+After confirmation, CK2 stops preview workers, closes, and hands the checked
+commit to an external updater running outside the venv. The updater waits for
+exit, rechecks Git state, fast-forwards to that commit, synchronizes initialized
+submodules, repairs software while remembering SAM, and restarts only after
+verification succeeds. Close every CK2 instance before using the standalone
+update launcher. A project lock prevents setup from replacing a running app's venv.
+
+## Repair and troubleshooting
+
+Rerun Install / Repair after a failure. OS-held locks prevent concurrent setup
+or updates. Environment replacement creates the new venv at its final path;
+venvs are not moved into place after installation. The previous environment is
+retained under `.runtime/backups/`. A migration journal restores the previous
+venv and configuration if setup fails or is interrupted. Backups must be restored
+to `venv/` before use; their entrypoints are not independently relocatable.
+
+Update logs live under `logs/updates/`. A failed update leaves a message shown
+on the next application launch and never automatically starts an unverified
+venv. Code may already have fast-forwarded when dependency setup fails: repair
+that checkout, then run again. Software verification is separate from the Check
+launcher's driver, CUDA computation, codec, and model-file checks. Missing GPU
+memory does not mean environment installation failed.
+
+For local source changes or diverged history, resolve the Git state manually.
+Do not delete weights, exports, or preferences to make the working tree clean.
+If an update cannot finish, the local changelog remains available offline.
+
+`.runtime/`, `venv/`, generated shortcuts, caches, weights, hints, and outputs are
+excluded from Git. User preferences remain in the existing application settings.
+Moving a checkout requires rerunning setup to repair environment paths and
+regenerate its shortcut.
+
+## Validation boundaries
+
+The regression suite covers Git update states, incoming Unreleased notes,
+background UI behavior, busy-state restrictions, checksum rejection, setup
+locking, migration rollback, remembered SAM, and scratch-map cleanup. Windows
+Job Object cancellation, exclusive directory publication, and file-handle tests
+are included but run only on Windows. A real Windows NVIDIA validation of
+preview, SAM, EXR/video export, and update/restart is still required.
+
+
+Current Linux validation: 77 tests passed, with three Windows-only tests skipped.
+The real managed installer and its healthy-environment reuse passed. The external
+updater also passed a local-repository fast-forward/setup/restart integration
+test. CUDA prerequisites and actual EXR/video GPU export checks passed in the
+managed environment. After freeing VRAM previously occupied by other apps,
+automatic preview, model reuse, and preview-to-render GPU handoff also passed.
+Real SAM 3.1 checks passed on a production 4096×2160 EXR sequence: text prompts,
+include/exclude dots, box selection, colored object picking, brush undo, native
+hint saving and attachment, CK preview after releasing SAM, and two native-size
+frames across all four EXR passes. This covers two rendered frames, not the full
+production clip, and does not establish native Windows GPU support as verified.

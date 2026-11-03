@@ -89,6 +89,77 @@ class Desktop(unittest.TestCase):
         self.clip.touch()
         self.window.add_paths([str(self.clip)])
 
+    def test_requeue_terminal_clips_preserves_hints_and_completed_results(self):
+        from PySide6.QtCore import Qt
+        w = self.window
+        w.add_paths([self.clip, self.clip])
+        snapshots = []
+        for index, state in enumerate(('Done', 'Failed', 'Cancelled')):
+            item = w.queue.item(index)
+            data = item.data(Qt.UserRole)
+            data.update(state=state, output='/previous/output', job_dir='/previous/job',
+                        passes={'alpha': '/previous/alpha'},
+                        hint_settings={'hint_path': '/saved/hint.png', 'hint_mode': 'first', 'hint_quality': .6})
+            item.setData(Qt.UserRole, data)
+            snapshots.append(dict(data, state='Queued'))
+            item.setSelected(True)
+        w.sync_render_queue()
+        self.assertTrue(w.requeue_button.isEnabled())
+        w.requeue_button.click()
+        self.assertEqual(w.queue.count(), 3)
+        for index, expected in enumerate(snapshots):
+            self.assertEqual(w.queue.item(index).data(Qt.UserRole), expected)
+            self.assertIn('Queued', w.render_queue.item(index).text())
+        self.assertFalse(w.requeue_button.isEnabled())
+        w.requeue_selected()
+        self.assertEqual(w.queue.count(), 3)
+
+    def test_requeue_only_selected_terminal_items_and_blocks_active_queue(self):
+        from PySide6.QtCore import Qt
+        w = self.window
+        w.add_paths([self.clip])
+        first, second = w.queue.item(0), w.queue.item(1)
+        for item in (first, second):
+            data = item.data(Qt.UserRole); data['state'] = 'Failed'; item.setData(Qt.UserRole, data)
+        w.select_queue_entry(w.render_queue.item(0))
+        w.set_busy(True)
+        w.requeue_selected()
+        self.assertEqual(first.data(Qt.UserRole)['state'], 'Failed')
+        self.assertFalse(w.requeue_button.isEnabled())
+        w.set_busy(False)
+        w.jobs = [('pending',)]
+        w.requeue_selected()
+        self.assertEqual(first.data(Qt.UserRole)['state'], 'Failed')
+        w.jobs.clear(); w.update_requeue_action()
+        w.requeue_selected()
+        self.assertEqual(first.data(Qt.UserRole)['state'], 'Queued')
+        self.assertEqual(second.data(Qt.UserRole)['state'], 'Failed')
+
+    def test_requeued_clip_uses_current_options_and_preserves_prior_version(self):
+        from PySide6.QtCore import Qt
+        from unittest.mock import patch
+        from linux_export import plan_export
+        w = self.window
+        base = Path(self.temp.name) / 'renders'; previous = base / 'test_fg_v001'
+        previous.mkdir(parents=True); (previous/'keep.mp4').write_bytes(b'old result')
+        item = w.queue.currentItem(); data = item.data(Qt.UserRole)
+        data.update(state='Done', output=str(base), passes={'fg':str(previous)})
+        item.setData(Qt.UserRole, data)
+        hint = Path(self.temp.name)/'hint.png'; hint.touch()
+        w.hint.setText(str(hint)); w.hint_mode.setCurrentIndex(w.hint_mode.findData('first'))
+        w.save_sibling.setChecked(False); w.destination.setText(str(base)); w.fps.setValue(30)
+        for key, checkbox in w.channels.items():checkbox.setChecked(key == 'alpha')
+        w.requeue_selected()
+        with patch.object(w, 'check_installation') as check:
+            w.start_queue(); check.assert_called_once()
+        self.assertEqual(len(w.jobs), 1)
+        queued_item, options, destination = w.jobs[0]
+        self.assertIs(queued_item, item)
+        self.assertEqual(options.outputs, ('alpha',)); self.assertEqual(options.fps, 30)
+        self.assertEqual(options.hint_path, str(hint)); self.assertEqual(options.hint_mode, 'first')
+        self.assertEqual(plan_export(self.clip, destination, options.outputs).version, 2)
+        self.assertEqual((previous/'keep.mp4').read_bytes(), b'old result')
+
     def test_preflight_failure_preserves_pending_items(self):
         from PySide6.QtCore import Qt, QProcess
         self.window.jobs = [('placeholder',)]

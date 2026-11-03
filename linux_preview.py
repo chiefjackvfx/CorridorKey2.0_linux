@@ -1,4 +1,5 @@
 """One persistent GPU worker, one running request, and one latest pending request."""
+from worker_process import start_worker, signal_tree
 from dataclasses import asdict
 from collections import deque
 import uuid
@@ -108,7 +109,7 @@ class AutoPreview(QObject):
             self.errors = ''
             self.buffer = b''
             self.status.emit('Loading preview model…')
-            self.process.start('setsid', [sys.executable, '-u', str(self.root/'scripts/preview_worker.py')])
+            start_worker(self.process, [sys.executable, '-u', str(self.root/'scripts/preview_worker.py')])
             return
         if self.busy or not self.ready:
             return
@@ -182,10 +183,7 @@ class AutoPreview(QObject):
         self.invalidate()
         pid = self.process.processId()
         if pid:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                self.process.kill()
+            signal_tree(pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
             self.process.waitForFinished(5000)
         self.ready = self.busy = False
         self.buffer = b''

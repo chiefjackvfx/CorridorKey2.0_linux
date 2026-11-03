@@ -6,6 +6,9 @@ for installation, input selection, queued jobs, and export controls. Its existin
 GUI targets the earlier CorridorKey model; this implementation calls CK2.0's own
 `infer.py`. No EZ-CorridorKey source or branding assets were copied.
 
+For managed Python, Windows launchers, repair, updates, and the changelog viewer,
+see [SETUP.md](SETUP.md).
+
 ## Install from the fork
 
 ```bash
@@ -41,7 +44,11 @@ works independently of file-manager launcher support. Pass clip paths to
 The app processes one clip at a time. Each run writes versioned pass folders;
 logs and settings stay in a private job directory. Input files are preserved.
 Settings are captured at queue start. Clips added during processing wait for the
-next start. Re-add a finished, failed, or cancelled clip to retry it. Stopping
+next start. Select finished, failed, or cancelled clips and click **Requeue selected**
+(or right-click → **Requeue selected**) to run them again, then click **Render queue**.
+You can select multiple media cards. Requeuing keeps per-clip hints and previous
+results; the next render uses current settings and a new output version.
+Requeuing is disabled while the queue is running. Stopping
 cancels the active process group (including FFmpeg) and leaves unstarted clips
 queued. Private intermediate files from cancelled or failed jobs remain for inspection.
 
@@ -314,35 +321,33 @@ commercial Windows app. Differences that remain:
 
 ## Install on another Linux machine
 
-Requirements: Linux x86-64, Python 3.11 or 3.12 with `venv`, Git, FFmpeg/ffprobe
-with `libx264` and `prores_ks`, util-linux (`setsid`), Qt desktop libraries, and a
-CUDA-capable NVIDIA Ampere or newer GPU. Keep sufficient disk space for the
-CUDA environment, roughly 5 GB of model assets, and footage/output scratch.
+Requirements: Linux x86-64, Git, curl or wget, util-linux (`setsid`), Qt desktop
+libraries, and a CUDA-capable NVIDIA Ampere or newer GPU. Keep sufficient disk
+space for CUDA packages, roughly 5 GB of model assets, and footage/output scratch.
 
 ```bash
-chmod +x 1-install.sh 2-start.sh 3-check.sh
 ./1-install.sh
 ./2-start.sh
 ```
 
-The installer creates a local `venv`, installs upstream's tested PyTorch 2.9.1 /
-torchvision 0.24.1 CUDA 12.8 build, installs Python dependencies, downloads the
-official model assets, creates a project-local desktop shortcut, and checks
-readiness. It does not use sudo or change drivers or system packages. Rerunning
-is supported; model downloads reuse existing files. `CK_PYTHON=/path/to/python3.12`
-selects a different interpreter when creating a new environment. Python 3.13 is
-excluded because upstream requires NumPy below version 2.
+The installer provisions local Python 3.12, a local `venv`, pinned PyTorch 2.9.1 /
+torchvision 0.24.1 CUDA 12.8, managed FFmpeg/ffprobe, and a desktop shortcut.
+It downloads official model assets unless `--skip-weights` is supplied. It does
+not use sudo or change drivers, system Python, or global PATH. Repairs preserve
+an environment backup and recover interrupted migrations. `--sam` enables the
+optional hint model dependencies; the gated checkpoint remains user supplied.
+The SAM choice is remembered. `--repair` forces a rebuild of the environment.
 
-`./1-install.sh --skip-weights` installs software without downloading models;
-the final check still reports missing weights and exits nonzero until they are
-downloaded. Fetch them later with:
+`./1-install.sh --skip-weights` installs software without fetching models.
+Use `./3-check.sh` to check CUDA and model readiness separately. Fetch missing
+weights later with:
 
 ```bash
 venv/bin/python scripts/download_weights.py
 ./3-check.sh
 ```
 
-On Rocky Linux, the system may need `python3.12`, `git`, `libxcb`,
+On Rocky Linux, the system may need `git`, `libxcb`,
 `xcb-util-cursor`, `libxkbcommon-x11`, and Mesa/OpenGL libraries. FFmpeg packaging
 varies by enabled repositories; this machine already supplies working encoders.
 On Debian/Ubuntu, Python venv support is usually a separate `python3-venv`
@@ -420,8 +425,8 @@ quality on production footage, long-clip memory use, or every hint combination.
 The sibling-export GPU test uses two-frame 512×288 sources. It checks alpha-only
 EXRs, shared versions for the other passes, source numbering, preserved inputs
 and previous exports, private logs, custom-folder video exports, and rendered
-viewer lookup. Artifacts live under `outputs/sibling-export-smoke/`. The 50-test
-regression suite also covers concurrent reservations, collision rollback,
+viewer lookup. Artifacts live under `outputs/sibling-export-smoke/`. The regression
+suite also covers concurrent reservations, collision rollback,
 receipt-write failure rollback, and numeric frame ordering.
 
 ## Sources

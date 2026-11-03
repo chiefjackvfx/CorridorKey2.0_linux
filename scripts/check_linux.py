@@ -7,6 +7,10 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from runtime_support import configure
+import os
+configure()
 
 
 def main():
@@ -18,8 +22,8 @@ def main():
             importlib.import_module(module)
             print(f'OK: {module}', flush=True)
         except Exception as exc:
-            failures.append(f'{module}: {exc}; rerun ./1-install.sh')
-    for executable in ('ffmpeg', 'ffprobe', 'setsid'):
+            failures.append(f'{module}: {exc}; rerun Install / Repair')
+    for executable in (('ffmpeg', 'ffprobe') if os.name == 'nt' else ('ffmpeg', 'ffprobe', 'setsid')):
         if not shutil.which(executable):
             failures.append(f'{executable} missing from PATH')
     if shutil.which('ffmpeg'):

@@ -117,6 +117,10 @@ def release_lock(lock,owner):
 
 def rename_exclusive(source,destination):
     """Linux atomic directory publication: never replace an existing directory."""
+    if os.name == 'nt':
+        # Windows rename fails when any destination already exists.
+        os.rename(source, destination)
+        return
     function=getattr(ctypes.CDLL(None,use_errno=True),'renameat2',None)
     if function is None:raise RuntimeError('This Linux system does not support atomic exclusive folder publication.')
     function.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]
