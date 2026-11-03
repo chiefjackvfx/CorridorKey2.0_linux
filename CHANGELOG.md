@@ -54,6 +54,11 @@
 
 ### Changed
 
+- [2026-11-03T16:03:34+00:00] Kept export staging local without destination cache folders.
+- [2026-11-03T16:03:34+00:00] Tested cross-filesystem publication, copy failures, collisions, and rollback.
+
+- [2026-11-03T16:00:56+00:00] Moved export reservation locks into destination-scoped project cache folders.
+
 - [2026-11-03T15:46:31+00:00] Listed update-blocking files and tested safe legacy-launcher preservation.
 
 - [2026-11-03T15:32:31+00:00] Moved render intermediates, inference scratch, and installer downloads into cache.

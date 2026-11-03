@@ -3,13 +3,14 @@ from dataclasses import dataclass
 from pathlib import Path
 import ctypes
 import errno
+import hashlib
 import json
 import os
 import re
 import shutil
 import tempfile
 import uuid
-from app_cache import cache_directory
+from app_cache import cache_directory, cache_path
 
 PASSES=('fg','cutout','checker','alpha')
 IMAGES={'.png','.jpg','.jpeg','.exr'}
@@ -61,6 +62,14 @@ class ExportPlan:
         return [str(Path(folder)/self.filename(key)) for key,folder in self.folders.items()]
 
 
+def reservation_cache_path(parent, stem):
+    # One namespace per destination and clip, shared across selected passes and
+    # source version padding. Different destinations must not reserve each other.
+    identity=os.path.normcase(str(Path(parent).resolve()))+'\0'+stem.casefold()
+    key=hashlib.sha256(identity.encode('utf-8')).hexdigest()
+    return cache_path('export-locks')/key
+
+
 def plan_export(source,base,passes,*,sibling=False,output_format='exr'):
     source=Path(source).expanduser().resolve()
     if set(passes)-set(PASSES):raise ValueError('Unknown export pass.')
@@ -81,6 +90,11 @@ def plan_export(source,base,passes,*,sibling=False,output_format='exr'):
         for path in parent.iterdir():
             match=pattern.fullmatch(path.name) or lock_pattern.fullmatch(path.name)
             if match:version=max(version,int(match[1])+1)
+    locks=reservation_cache_path(parent,stem)
+    if locks.is_dir():
+        for path in locks.iterdir():
+            match=re.fullmatch(r'v(\d+)\.lock',path.name)
+            if match:version=max(version,int(match[1])+1)
     return ExportPlan(str(parent),stem,version,width,source_start(source),output_format,passes)
 
 
@@ -92,12 +106,13 @@ class Reservation:
         owner=owner or uuid.uuid4().hex
         while True:
             plan=plan_export(source,base,passes,sibling=sibling,output_format=output_format)
-            parent=Path(plan.parent);parent.mkdir(parents=True,exist_ok=True)
-            lock=parent/f'.{plan.stem}_ck2_v{plan.version:0{plan.width}d}.lock'
+            locks=reservation_cache_path(plan.parent,plan.stem)
+            locks.mkdir(parents=True,exist_ok=True)
+            lock=locks/f'v{plan.version}.lock'
             try:lock.mkdir()
             except FileExistsError:continue
             try:
-                write_json(lock/'owner.json',{'owner':owner})
+                write_json(lock/'owner.json',{'owner':owner,'destination':plan.parent,'stem':plan.stem,'version':plan.version})
                 if any(Path(folder).exists() or Path(folder).is_symlink() for folder in plan.folders.values()):
                     shutil.rmtree(lock);continue
                 return cls(plan,lock,owner)
@@ -186,13 +201,11 @@ def validate_passes(files,output_format,expected_frames=None):
 
 
 def publish_passes(reservation,files,record=None):
-    """Prepare every pass, then publish each complete directory; roll back on failure."""
+    """Stage locally, publish without overwrites, and roll back owned folders on failure."""
     plan=reservation.plan;temporary=[];published=[]
+    parent=Path(plan.parent)
+    if not parent.is_dir():parent.mkdir(parents=True,exist_ok=True)
     stage_parent=cache_directory('publish')
-    # Exclusive rename must stay on the destination filesystem. For a different
-    # filesystem, keep only the short-lived publication stage in its local .cache.
-    if stage_parent.stat().st_dev != Path(plan.parent).stat().st_dev:
-        stage_parent=cache_directory('ck2-publish',plan.parent)
     try:
         for key in plan.passes:
             stage=Path(tempfile.mkdtemp(prefix='ck2-publish-',dir=stage_parent));temporary.append(stage)
@@ -200,15 +213,34 @@ def publish_passes(reservation,files,record=None):
                 copy_exclusive(source,stage/plan.filename(key,index))
         for key,stage in zip(plan.passes,temporary):
             target=Path(plan.folders[key]);inode=stage.stat().st_ino
-            rename_exclusive(stage,target);published.append((target,inode))
+            try:
+                rename_exclusive(stage,target)
+            except OSError as exc:
+                if exc.errno!=errno.EXDEV and getattr(exc,'winerror',None)!=17:raise
+                # A NAS/different drive cannot rename local staging. Create only
+                # the final pass folder and copy exclusively; never stage there.
+                target.mkdir()
+                owned={}
+                published.append((target,target.stat().st_ino,owned))
+                for source in stage.iterdir():
+                    with source.open('rb') as src,(target/source.name).open('xb') as dst:
+                        owned[source.name]=os.fstat(dst.fileno()).st_ino
+                        shutil.copyfileobj(src,dst,1024*1024)
+            else:
+                published.append((target,inode,None))
         if record:record(plan.folders)
         return plan.folders
     except BaseException:
-        for target,inode in reversed(published):
+        for target,inode,owned in reversed(published):
             # Only remove directories created by this attempt, with no foreign files.
             expected={plan.filename(key,i) for key in plan.passes if Path(plan.folders[key])==target for i in range(len(files[key]))}
-            if target.exists() and target.stat().st_ino==inode and {p.name for p in target.iterdir()}==expected:
-                shutil.rmtree(target)
+            if target.is_symlink() or not target.exists() or target.stat().st_ino!=inode:continue
+            entries=list(target.iterdir())
+            if owned is None:
+                removable={p.name for p in entries}==expected
+            else:
+                removable=all(p.name in owned and not p.is_symlink() and p.stat().st_ino==owned[p.name] for p in entries)
+            if removable:shutil.rmtree(target)
         raise
     finally:
         for stage in temporary:

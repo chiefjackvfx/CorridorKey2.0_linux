@@ -73,7 +73,9 @@ can produce these sibling files:
 
 All selected passes share a version. Existing versions across all four passes
 are respected, including unselected passes, and subsequent renders use the next
-available version. The version is reserved when the job starts, so the preview
+available version. Reservation locks stay in the installation's
+`.cache/export-locks/`, keyed by destination and clip, rather than beside footage
+or output folders. The version is reserved when the job starts, so the preview
 can change if another job claims it first. Existing folders are never overwritten.
 EXRs count consecutively from the source's first frame number, with at least
 four digits. Movies and unnumbered sources start at 1001. Video exports use the
@@ -82,7 +84,10 @@ same folder/version scheme, with MOV for Cutout and MP4 for other passes.
 Final pass folders contain media only. The job receipt (`export.json`),
 `inference.log`, and settings live under this installation's `logs/jobs/`
 directory. Disposable working media and inference scratch live under `.cache/`. Outputs are validated before publication; handled
-publication failures roll back newly created pass folders. Successful jobs remove
+publication failures roll back newly created pass folders. Publication staging and
+locks stay in the application's `.cache`; destinations receive only final pass
+folders and media. Across filesystems, copying fills those folders directly, so
+they can be visible before the job is complete. Successful jobs remove
 their bulky intermediate media. **Open selected results** and rendered-channel
 viewing use the published pass paths. Direct `infer.py` commands retain the
 upstream output layout.

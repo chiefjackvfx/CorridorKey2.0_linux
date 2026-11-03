@@ -13,7 +13,7 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 from linux_export import (plan_export,Reservation,publish_passes,runtime_passes,validate_passes,
-                         write_json,source_start)
+                         write_json,source_start,reservation_cache_path)
 from linux_jobs import Options
 
 
@@ -57,6 +57,31 @@ class ExportFiles(unittest.TestCase):
         self.assertEqual(sorted(r.plan.version for r in reservations),[5,6,7,8])
         self.assertEqual(plan_export(self.source,'',('fg',),sibling=True).version,9)
 
+    def test_reservations_only_write_to_local_cache(self):
+        original={p.name for p in self.root.iterdir()}
+        cache=reservation_cache_path(self.root,'shot_DN')
+        self.assertFalse(cache.exists())
+        plan_export(self.source,'',('alpha',),sibling=True)
+        self.assertFalse(cache.exists())
+        reservation=self.reserve(('alpha',))
+        self.assertEqual(reservation.lock.parent,cache)
+        self.assertTrue(reservation.lock.is_relative_to(Path.cwd()/'.cache/export-locks'))
+        self.assertEqual({p.name for p in self.root.iterdir()},original)
+        reservation.close();self.assertFalse(reservation.lock.exists())
+        custom=self.reserve(('alpha',),sibling=False)
+        self.assertFalse((self.root/'custom').exists())
+        self.assertNotEqual(custom.lock.parent,cache)
+        self.assertEqual(custom.plan.version,1)
+
+    def test_destination_namespaces_and_legacy_locks_remain_safe(self):
+        first=self.reserve(('alpha',))
+        custom=self.reserve(('fg',),sibling=False)
+        self.assertEqual(first.plan.version,1);self.assertEqual(custom.plan.version,1)
+        self.assertNotEqual(first.lock.parent,custom.lock.parent)
+        legacy=self.root/'.shot_DN_ck2_v006.lock';legacy.mkdir()
+        self.assertEqual(plan_export(self.source,'',('alpha',),sibling=True).version,7)
+        self.assertTrue(legacy.exists())
+
     def test_publish_keeps_bytes_and_only_selected_passes(self):
         files=self.outputs();reservation=self.reserve()
         originals={key:[p.read_bytes() for p in paths] for key,paths in files.items()}
@@ -87,6 +112,59 @@ class ExportFiles(unittest.TestCase):
         with self.assertRaises(ValueError):validate_passes(files,'exr',3)
         files['alpha'].pop()
         with self.assertRaises(ValueError):validate_passes(files,'exr')
+
+    def test_cross_device_publication_never_creates_destination_cache(self):
+        files=self.outputs();reservation=self.reserve()
+        before={p.name for p in self.root.iterdir()}
+        import linux_export
+        real_cache=linux_export.cache_directory
+        def local_cache(category,*args,**kwargs):
+            self.assertEqual(category,'publish')
+            self.assertFalse(args);self.assertFalse(kwargs)
+            return real_cache(category)
+        with patch('linux_export.rename_exclusive',side_effect=OSError(errno.EXDEV,'different filesystem')),patch('linux_export.cache_directory',side_effect=local_cache):
+            result=publish_passes(reservation,files)
+        after={p.name for p in self.root.iterdir()}
+        self.assertEqual(after-before,{Path(folder).name for folder in result.values()})
+        self.assertFalse((self.root/'.cache').exists())
+        for key,folder in result.items():
+            for index,source in enumerate(files[key]):
+                self.assertEqual((Path(folder)/reservation.plan.filename(key,index)).read_bytes(),source.read_bytes())
+
+    def test_windows_cross_volume_error_copies_without_destination_cache(self):
+        files=self.outputs();reservation=self.reserve()
+        error=OSError('The system cannot move the file to a different disk drive')
+        error.winerror=17
+        with patch('linux_export.rename_exclusive',side_effect=error):
+            result=publish_passes(reservation,files)
+        self.assertFalse((self.root/'.cache').exists())
+        self.assertEqual((Path(result['alpha'])/reservation.plan.filename('alpha')).read_bytes(),files['alpha'][0].read_bytes())
+
+    def test_cross_device_partial_copy_failure_rolls_back_owned_folders(self):
+        files=self.outputs();reservation=self.reserve()
+        before={p.name for p in self.root.iterdir()}
+        def broken_copy(src,dst,*args):
+            self.assertIn(str(Path(dst.name).parent),reservation.plan.folders.values())
+            dst.write(b'partial');raise OSError('Network copy interrupted')
+        with patch('linux_export.rename_exclusive',side_effect=OSError(errno.EXDEV,'different filesystem')),patch('linux_export.shutil.copyfileobj',side_effect=broken_copy):
+            with self.assertRaises(OSError):publish_passes(reservation,files)
+        self.assertEqual({p.name for p in self.root.iterdir()},before)
+        self.assertTrue(all(p.exists() for paths in files.values() for p in paths))
+
+    def test_cross_device_collision_and_receipt_failure_preserve_foreign_data(self):
+        files=self.outputs();reservation=self.reserve()
+        foreign=Path(reservation.plan.folders['alpha']);foreign.mkdir()
+        (foreign/'keep.txt').write_text('keep')
+        with patch('linux_export.rename_exclusive',side_effect=OSError(errno.EXDEV,'different filesystem')):
+            with self.assertRaises(FileExistsError):publish_passes(reservation,files)
+        self.assertFalse(Path(reservation.plan.folders['fg']).exists())
+        self.assertEqual((foreign/'keep.txt').read_text(),'keep')
+        (foreign/'keep.txt').unlink();foreign.rmdir()
+        def failed_receipt(passes):raise OSError('Receipt write failed')
+        with patch('linux_export.rename_exclusive',side_effect=OSError(errno.EXDEV,'different filesystem')):
+            with self.assertRaises(OSError):publish_passes(reservation,files,failed_receipt)
+        self.assertTrue(all(not Path(folder).exists() for folder in reservation.plan.folders.values()))
+        self.assertFalse((self.root/'.cache').exists())
 
     def test_wrapper_completion_and_failure_release_reservation(self):
         from scripts.render_job import execute_job

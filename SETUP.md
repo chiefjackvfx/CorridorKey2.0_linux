@@ -100,6 +100,7 @@ AppData. The folder is created automatically and ignored by Git.
 
 - `.cache/previews/` and `.cache/hints/`: per-session previews and hint-editor work.
 - `.cache/renders/` and `.cache/inference/`: per-job intermediate media and scratch.
+- `.cache/export-locks/`: version reservations keyed by destination and clip stem.
 - `.cache/temp/` and `.cache/downloads/`: library/setup temporary files and downloads.
 - `.cache/uv/`, `.cache/pip/`, `.cache/huggingface/`, `.cache/torch/`, and related
   subfolders: package, model-library, Python bytecode, and CUDA/Triton caches.
@@ -111,9 +112,26 @@ intermediate render media and scratch. Failed render cache locations are recorde
 in `logs/jobs/<job>/export.json` for inspection. Durable logs and settings receipts
 stay under `logs/jobs/`; final exports, weights, and saved hints keep their paths.
 
-Atomic folder publication must use the destination filesystem. When exporting to
-another filesystem, the short-lived publication stage therefore uses
-`<output parent>/.cache/ck2-publish/`; its working folders are removed afterward.
+Export reservations write their `.lock` folders and ownership records only into
+this installation's `.cache/export-locks/`, with no reservation writes beside
+source footage or outputs. Output folders are created only when publication
+starts. Concurrent jobs using the same installation cache reserve separate
+versions; different destinations have separate namespaces. Older reservation
+locks already present beside outputs are respected without being changed.
+Other installations or machines have independent reservation caches; exclusive
+final-folder publication still prevents overwriting shared outputs, but a
+simultaneous version collision can make one job fail safely.
+
+Publication stages stay only in the installation's `.cache/publish/`. The export
+destination receives final pass folders and media only: no `.cache`, lock files,
+or temporary staging folders are created there. On the same filesystem, complete
+pass folders are published by exclusive rename. On a NAS or different drive,
+CK2 exclusively creates the final pass folders and copies the validated media
+directly into them. Those folders are visible while the copy is in progress;
+the job is complete only after all passes and the receipt succeed. Handled
+failures roll back folders owned by that attempt, preserving foreign files.
+An abrupt process termination or unavailable share can leave partial final
+folders; a later render selects a new version rather than overwriting them.
 
 Windows image-sequence previews copy the requested frame into the local cache,
 including frames read from UNC/NAS shares. Administrator access and Developer
@@ -161,7 +179,7 @@ are included but run only on Windows. A real Windows NVIDIA validation of
 preview, SAM, EXR/video export, and update/restart is still required.
 
 
-Current Linux validation: 93 tests passed, with three Windows-only tests skipped.
+Current Linux validation: 99 tests passed, with three Windows-only tests skipped.
 The real managed installer and its healthy-environment reuse passed. The external
 updater also passed a local-repository fast-forward/setup/restart integration
 test. CUDA prerequisites and actual EXR/video GPU export checks passed in the
