@@ -52,6 +52,8 @@
 
 ### Changed
 
+- [2026-11-03T15:17:48+00:00] Validated portable SAM import, mask operations, and CUDA selection.
+
 - [2026-11-03T13:49:00+00:00] Covered requeue states, busy guards, settings, and output-version preservation.
 
 - [2026-11-03T13:35:56+00:00] Validated managed-environment previews, SAM selections, and full-resolution EXR exports.
@@ -70,6 +72,8 @@
 - [2026-11-02T12:20:02+00:00] Defaulted sequence playback to 25fps and enabled linear input.
 
 ### Fixed
+
+- [2026-11-03T15:17:48+00:00] Fixed Windows SAM imports with portable Triton-free mask helpers.
 
 - [2026-11-03T13:24:12+00:00] Closed retained scratch mappings before Windows file cleanup.
 

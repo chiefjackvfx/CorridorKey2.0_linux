@@ -31,3 +31,31 @@ def adapt_interactive_frames(predictor):
         return original(inference_state,frame_idx,refined_obj_id_to_mask)
     predictor.model._build_sam2_output=build_output
     return predictor
+
+
+def prepare_sam_imports():
+    """Install narrow portable SAM helpers before importing its eager package.
+
+    Windows wheels do not supply Triton with this Torch stack. Linux keeps its
+    native kernels unless Triton is missing or CK_SAM_PORTABLE_OPS=1 is set.
+    """
+    import importlib.util
+    import os
+    import sys
+    from types import ModuleType
+    portable = (os.name == 'nt' or os.environ.get('CK_SAM_PORTABLE_OPS') == '1'
+                or importlib.util.find_spec('triton') is None)
+    if not portable:
+        return False
+    from sam_portable_ops import distance_transform, connected_components, generic_nms
+    helpers = {
+        'sam3.model.edt': ('edt_triton', distance_transform),
+        'sam3.perflib.triton.connected_components': ('connected_components_triton', connected_components),
+        'sam3.perflib.triton.nms': ('nms_triton', generic_nms),
+    }
+    for name, (symbol, function) in helpers.items():
+        module = ModuleType(name)
+        module.__doc__ = 'CK2 portable SAM mask helper; source submodule remains unchanged.'
+        setattr(module, symbol, function)
+        sys.modules.setdefault(name, module)
+    return True

@@ -73,7 +73,7 @@ assert int(numpy.__version__.split('.')[0]) < 2
 for name in ['PySide6.QtWidgets','cv2','transformers','timm','safetensors','einops','scipy','utils3d']:
     importlib.import_module(name)
 '''
-    if sam: code += "import sam3, pycocotools, psutil\n"
+    if sam: code += "from sam_hint_backend import prepare_sam_imports\nprepare_sam_imports()\nimport sam3, pycocotools, psutil\n"
     run([python,'-c',code],root, timeout=180)
     run([python,'-m','pip','check'],root,timeout=120)
 

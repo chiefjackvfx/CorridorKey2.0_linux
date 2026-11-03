@@ -77,6 +77,8 @@ def main():
                             free,total=torch.cuda.mem_get_info()
                             if free < 8*1024**3:
                                 raise ValueError(f'Only {free/1024**3:.1f} GiB GPU memory free. Free memory in other GPU apps before loading SAM.')
+                            from sam_hint_backend import prepare_sam_imports
+                            prepare_sam_imports()
                             from sam3.model_builder import build_sam3_predictor
                             predictor=build_sam3_predictor(checkpoint_path=str(checkpoint),version='sam3.1',
                                 compile=False,warm_up=False,use_fa3=False,use_rope_real=False,async_loading_frames=False)

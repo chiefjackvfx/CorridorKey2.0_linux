@@ -40,6 +40,15 @@ the first migration; later repair/update runs remember the choice. The dedicated
 SAM launcher enables it later. Obtain `sam3.1_multiplex.pt` from Meta separately;
 setup never downloads that gated checkpoint. Choose its path in the hint editor.
 
+Windows uses portable distance-transform, connected-component, and mask-NMS
+helpers because this Torch Windows stack does not supply Triton. These mask
+operations use existing SciPy/PyTorch dependencies, returning results to the
+original device. SAM model inference remains on CUDA. Both installer verification
+and the hint worker prepare this compatibility layer before importing SAM; the
+pinned SAM submodule stays unchanged. Linux retains native Triton helpers when
+available. `CK_SAM_PORTABLE_OPS=1` can force the portable path for testing.
+
+
 Setup needs internet access and substantial disk space for CUDA dependencies,
 model weights, temporary downloads, and an environment backup. Later ordinary
 launches install nothing and can run offline with previously downloaded weights.
@@ -111,7 +120,7 @@ are included but run only on Windows. A real Windows NVIDIA validation of
 preview, SAM, EXR/video export, and update/restart is still required.
 
 
-Current Linux validation: 77 tests passed, with three Windows-only tests skipped.
+Current Linux validation: 82 tests passed, with three Windows-only tests skipped.
 The real managed installer and its healthy-environment reuse passed. The external
 updater also passed a local-repository fast-forward/setup/restart integration
 test. CUDA prerequisites and actual EXR/video GPU export checks passed in the
@@ -122,3 +131,7 @@ include/exclude dots, box selection, colored object picking, brush undo, native
 hint saving and attachment, CK preview after releasing SAM, and two native-size
 frames across all four EXR passes. This covers two rendered frames, not the full
 production clip, and does not establish native Windows GPU support as verified.
+
+The portable SAM path additionally passed an import test with Triton explicitly
+blocked and real CUDA tests for points, boxes, text refinement, object picking,
+and native-resolution hint saving. Native Windows GPU verification remains pending.
